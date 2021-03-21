@@ -1,0 +1,1 @@
+`go run cmd/actor/main.go -v -config=/Users/bellabah/Desktop/Auxo/Olympus-Platform/config`

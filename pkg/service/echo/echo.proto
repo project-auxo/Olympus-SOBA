@@ -1,0 +1,11 @@
+syntax = "proto3";
+package echo;
+option go_package = "github.com/Project-Auxo/Olympus/gen;gen";
+
+message EchoRequest {
+  string query = 1;
+}
+
+message EchoResponse {
+  string response = 1;
+}

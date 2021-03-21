@@ -1,0 +1,1 @@
+`go run cmd/broker/main.go -v -config=/Users/bellabah/Desktop/Auxo/Olympus-Platform/config`

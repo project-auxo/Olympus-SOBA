@@ -1,0 +1,1 @@
+`go run cmd/client/main.go -v -config=/Users/bellabah/Desktop/Auxo/Olympus-Platform/config -s=echo`

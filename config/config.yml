@@ -1,0 +1,9 @@
+multi: False  # True if run multiple, interconnected brokers.
+
+broker:
+  hostname: "*"
+  port: 5555
+
+# actor:
+#   services:
+#     - "echo"
