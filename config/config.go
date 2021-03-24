@@ -10,6 +10,7 @@ import (
 type Configurations struct {
 	Multi bool
 	Broker BrokerConfig
+	Actor ActorConfig
 }
 
 type BrokerConfig struct {
@@ -17,10 +18,19 @@ type BrokerConfig struct {
 	Port int
 }
 
-func LoadConfig(configPath string) (configuration Configurations, err error) {
-	viper.SetConfigName("config")
-	viper.AddConfigPath(configPath)
+type ActorConfig struct {
+	Services []string `yaml:"services"`
+}
+
+func LoadConfig(configPath ...string) (configuration Configurations, err error) {
+	configName := "config"
+	if len(configPath) > 1 {
+		configName = configPath[1]
+	}
+
+	viper.SetConfigName(configName)
 	viper.SetConfigType("yml")
+	viper.AddConfigPath(configPath[0])
 	err = viper.ReadInConfig()
 	if err != nil {
 		return
@@ -30,5 +40,11 @@ func LoadConfig(configPath string) (configuration Configurations, err error) {
 	if err != nil {
 		fmt.Printf("Unable to decode into struct, %v", err)
 	}
+	return
+}
+
+func GetActorServices(configPath ...string) (services []string) {
+	configuration, _ := LoadConfig(configPath...)
+	services = configuration.Actor.Services
 	return
 }

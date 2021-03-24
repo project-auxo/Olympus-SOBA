@@ -4,6 +4,7 @@ broker:
   hostname: "127.0.0.1" # "*"
   port: 5555
 
-# actor:
-#   services:
-#     - "echo"
+actor:
+  services:
+    - "echo"
+    - "sumnums"

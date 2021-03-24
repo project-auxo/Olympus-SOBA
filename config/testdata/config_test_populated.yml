@@ -1,0 +1,11 @@
+multi: False
+
+broker:
+  hostname: "blah"
+  port: 5555
+
+actor:
+  services:
+    - "a"
+    - "b"
+    - "c"
