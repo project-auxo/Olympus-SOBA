@@ -24,6 +24,7 @@ func NewActor(name string, broker string, verbose bool) (actor *Actor) {
 	coordinator := &Coordinator{
 		broker: broker,
 		verbose: verbose,
+		service: "echo",		// FIXME: Meant to be a list of available services read from config file.
 		heartbeat: 2500 * time.Millisecond,
 		reconnect: 2500 * time.Millisecond,
 	}

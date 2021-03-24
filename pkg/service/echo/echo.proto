@@ -1,6 +1,6 @@
 syntax = "proto3";
 package echo;
-option go_package = "github.com/Project-Auxo/Olympus/gen;gen";
+option go_package = "github.com/Project-Auxo/Olympus/echo";
 
 message EchoRequest {
   string query = 1;

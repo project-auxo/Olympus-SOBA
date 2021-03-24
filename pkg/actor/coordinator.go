@@ -119,7 +119,7 @@ func (coordinator *Coordinator) RecvFromBroker(
 		m = append(m, reply...)
 		m[0] = coordinator.replyTo
 		m[1] = ""
-		err = coordinator.SendToBroker(mdapi.MdpReply, "", m)
+		_ = coordinator.SendToBroker(mdapi.MdpReply, "", m)
 	}
 	coordinator.expectReply = true 
 

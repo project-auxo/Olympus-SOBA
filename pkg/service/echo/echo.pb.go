@@ -4,7 +4,7 @@
 // 	protoc        v3.14.0
 // source: echo.proto
 
-package gen
+package echo
 
 import (
 	proto "github.com/golang/protobuf/proto"
