@@ -51,10 +51,11 @@ REPLY command consists of a multipart message of 8 or more frames:
 - Frame 6: Empty frame
 - Frames 7+: Request body
 
-HEARTBEAT command consists of multipart message of 3 frames:
+HEARTBEAT command consists of multipart message of 4+ frames:
 - Frame 0: Empty frame
 - Frame 1: mdpActor
 - Frame 2: mdpHeartbeat
+- Frame 3+: Services...
 
 DISCONNECT command consists of a multipart message of 3 frames:
 - Frame 0: Empty frame

@@ -181,7 +181,8 @@ func (coordinator *Coordinator) RecvFromBroker(
 		}
 		// Send heartbeat if it's time.
 		if time.Now().After(coordinator.heartbeatAt) {
-			coordinator.SendToBroker(mdapi.MdpHeartbeat, "", []string{})
+			coordinator.SendToBroker(
+				mdapi.MdpHeartbeat, "", coordinator.loadableServices)
 			coordinator.heartbeatAt = time.Now().Add(coordinator.heartbeat)
 		}
 	}

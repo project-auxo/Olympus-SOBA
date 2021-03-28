@@ -143,6 +143,18 @@ func (broker *Broker) Bind(endpoint string) (err error) {
 	return
 }
 
+// addServices will add the services that an actor notifies the broker via its
+// mdapi.MdpReady and mdapi.MdpHeartbeat
+func (broker *Broker) addServices(services []string, actor *Actor) {
+	for _, serviceName := range services {
+		broker.knownServices[serviceName] = struct{}{}
+	}
+	// Update the actorServiceMap.
+	for serviceName := range broker.knownServices {
+		broker.actorServiceMap[serviceName] = append(
+			broker.actorServiceMap[serviceName], actor)
+	}
+}
 
 // Handle handles incoming messages to the broker.
 func (broker *Broker) Handle() {
@@ -206,24 +218,14 @@ func (broker *Broker) ActorMsg(sender string, msg []string) {
 	actor := broker.ActorRequire(sender)
 
 
-	// ["echo" "" "\x00\x80\x00A\xa8" "" "Hello World!"]
-
 	switch command {
 	case mdapi.MdpReady:
-		// Reserved service name.
+		// Reserved service name, handle internally.
 		if len(sender) >= 4 && sender[:4] == "mmi." {
 			log.Println("I: mmi. services have not yet been implemented.")
-		
-		// Actor notifies broker of its services.
 		} else {
-			for _, serviceName := range msg {
-				broker.knownServices[serviceName] = struct{}{}
-			}
-			// Update the actorServiceMap.
-			for serviceName := range broker.knownServices {
-				broker.actorServiceMap[serviceName] = append(
-					broker.actorServiceMap[serviceName], actor)
-			}
+			// Actor notifies broker of its services, update broker's internal state.
+			broker.addServices(msg, actor)
 		}
 	case mdapi.MdpReply:
 		serviceName, msg := popStr(msg)
@@ -232,6 +234,7 @@ func (broker *Broker) ActorMsg(sender string, msg []string) {
 		broker.socket.SendMessage(
 			client, "", mdapi.MdpcClient, serviceName, msg)
 	case mdapi.MdpHeartbeat:
+		broker.addServices(msg, actor) // Actor notifies broker of its services.
 		actor.expiry = time.Now().Add(HeartbeatExpiry)
 	case mdapi.MdpDisconnect:
 		actor.Delete(false)
