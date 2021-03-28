@@ -69,7 +69,7 @@ type Broker struct {
 	verbose bool	// Print activity to stdout.
 	endpoint string 	// Broker binds to this endpoint.
 
-	knownServices []string		// Known services available on the network.
+	knownServices map[string]struct{}		// Known services on the network.
 	runningServices map[string]*Service 		// Hash of running services.
 	waitingServices map[string]*Service 	// Service's awaiting an actor.
 	
@@ -80,7 +80,6 @@ type Broker struct {
 	heartbeatAt 	time.Time	// When to send the heartbeat.
 }
 
-
 // Service defines a running service instance and the actors attached to it.
 type Service struct {
 	broker *Broker // Broker instance.
@@ -90,7 +89,6 @@ type Service struct {
 
 	timestamp time.Time
 }
-
 
 // Actor class defines a single actor, idle or active.
 type Actor struct {
@@ -111,6 +109,7 @@ func NewBroker(verbose bool) (broker *Broker, err error) {
 		runningServices: make(map[string]*Service),
 		waitingServices: make(map[string]*Service),
 		actorServiceMap: make(map[string][]*Actor),
+		knownServices: make(map[string]struct{}),
 		actors: make(map[string]*Actor),
 		heartbeatAt: time.Now().Add(HeartbeatInterval),
 	}
@@ -144,6 +143,58 @@ func (broker *Broker) Bind(endpoint string) (err error) {
 	return
 }
 
+
+// Handle handles incoming messages to the broker.
+func (broker *Broker) Handle() {
+	if broker.endpoint == ""{
+		panic("Must bind broker first")
+	}
+	poller := zmq.NewPoller()
+	poller.Add(broker.socket, zmq.POLLIN)
+ 
+	// Get and process incoming messages forever or until interrupted.
+	for {
+		log.Println("...", broker.knownServices)
+		polled, err := poller.Poll(HeartbeatInterval)
+		if err != nil {
+			break		// Interrupted.
+		}
+		// Process next input message, if any.
+		if len(polled) > 0 {
+			msg, err := broker.socket.RecvMessage(0)
+			if err != nil {
+				break // Interrupted.
+			}
+			if broker.verbose {
+				log.Printf("I: received message: %q\n", msg)
+			}
+			sender, msg := popStr(msg)
+			_, msg = popStr(msg)
+			header, msg := popStr(msg)
+ 
+			switch header {
+			case mdapi.MdpcClient:
+			 broker.ClientMsg(sender, msg)
+			case mdapi.MdpActor:
+			 broker.ActorMsg(sender, msg)
+			default:
+			 log.Printf("E: invalid message: %q\n", msg)
+			}
+		 }
+		 // Disconnect and delete any expired actors, send hearbeats to idle actors
+		 // if needed.
+		 if time.Now().After(broker.heartbeatAt) {
+			 broker.Purge()
+			 for _, actor := range broker.actors {
+				 actor.Send(mdapi.MdpHeartbeat, "", []string{})
+			 }
+			 broker.heartbeatAt = time.Now().Add(HeartbeatInterval)
+		 }
+		}
+	 log.Println("W: interrupt received, shutting down...")
+ }
+
+
 // ActorMsg processes on MdpwReady, MdpwReply, MdpwHeartbeat or MdpwDisconnect
 // message sent to the broker by an actor.
 func (broker *Broker) ActorMsg(sender string, msg []string) {
@@ -158,13 +209,18 @@ func (broker *Broker) ActorMsg(sender string, msg []string) {
 	// ["echo" "" "\x00\x80\x00A\xa8" "" "Hello World!"]
 
 	switch command {
-	case mdapi.MdpReady:   // Actor registers all of its services with the broker.
-		if len(sender) >= 4 && sender[:4] == "mmi." { // Reserved service name.
+	case mdapi.MdpReady:
+		// Reserved service name.
+		if len(sender) >= 4 && sender[:4] == "mmi." {
 			log.Println("I: mmi. services have not yet been implemented.")
+		
+		// Actor notifies broker of its services.
 		} else {
-			broker.knownServices = append(broker.knownServices, msg...)
+			for _, serviceName := range msg {
+				broker.knownServices[serviceName] = struct{}{}
+			}
 			// Update the actorServiceMap.
-			for _, serviceName := range broker.knownServices {
+			for serviceName := range broker.knownServices {
 				broker.actorServiceMap[serviceName] = append(
 					broker.actorServiceMap[serviceName], actor)
 			}
@@ -232,55 +288,6 @@ func (broker *Broker) Purge() {
 	}
 }
 
-// Handle handles incoming messages to the broker.
-func (broker *Broker) Handle() {
- if broker.endpoint == ""{
-	 panic("Must bind broker first")
- }
- poller := zmq.NewPoller()
- poller.Add(broker.socket, zmq.POLLIN)
-
- // Get and process incoming messages forever or until interrupted.
- for {
-	 log.Println("...", broker.knownServices)
-	 polled, err := poller.Poll(HeartbeatInterval)
-	 if err != nil {
-		 break		// Interrupted.
-	 }
-	 // Process next input message, if any.
-	 if len(polled) > 0 {
-		 msg, err := broker.socket.RecvMessage(0)
-		 if err != nil {
-			 break // Interrupted.
-		 }
-		 if broker.verbose {
-			 log.Printf("I: received message: %q\n", msg)
-		 }
-		 sender, msg := popStr(msg)
-		 _, msg = popStr(msg)
-		 header, msg := popStr(msg)
-
-		 switch header {
-		 case mdapi.MdpcClient:
-			broker.ClientMsg(sender, msg)
-		 case mdapi.MdpActor:
-			broker.ActorMsg(sender, msg)
-		 default:
-			log.Printf("E: invalid message: %q\n", msg)
-		 }
-		}
-		// Disconnect and delete any expired actors, send hearbeats to idle actors
-		// if needed.
-		if time.Now().After(broker.heartbeatAt) {
-			broker.Purge()
-			for _, actor := range broker.actors {
-				actor.Send(mdapi.MdpHeartbeat, "", []string{})
-			}
-			broker.heartbeatAt = time.Now().Add(HeartbeatInterval)
-		}
- 	}
-	log.Println("W: interrupt received, shutting down...")
-}
 
 // Methods that work on a service.
 
