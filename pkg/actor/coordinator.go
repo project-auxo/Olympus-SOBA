@@ -30,7 +30,7 @@ const (
 )
 
 type Coordinator struct {
-	workerSocket *zmq.Socket 
+	// workerSocket *zmq.Socket 
 	brokerSocket *zmq.Socket
 	broker string 	// Coordinator binds to this endpoint.
 	poller *zmq.Poller
@@ -38,7 +38,8 @@ type Coordinator struct {
 	verbose bool 	// Print activity to stdout
 	// services map[string]*mdapi.Mdwrk		// Hash of current running services.
 
-	service string
+	service string		// FIXME: Delete me
+	loadableServices []string
 
 	// Heartbeat management.
 	heartbeatAt time.Time // When to send heartbeat.
@@ -94,7 +95,7 @@ func (coordinator *Coordinator) ConnectToBroker() (err error) {
 
 	// Register coordinator with the broker.
 	err = coordinator.SendToBroker(
-		mdapi.MdpReady, coordinator.service, []string{})
+		mdapi.MdpReady, "", coordinator.loadableServices)
 	
 	// If liveness hits zero, queue is considered disconnected.
 	coordinator.liveness = heartbeatLiveness
@@ -103,7 +104,7 @@ func (coordinator *Coordinator) ConnectToBroker() (err error) {
 	return
 }
 
-// RecvFromBroker sends a reply, if any to broker and waits for the next
+// RecvFromBroker first sends a reply, if any to broker and waits for the next
 // request.
 func (coordinator *Coordinator) RecvFromBroker(
 	reply []string) (msg []string, err error) {
@@ -206,7 +207,9 @@ func (coordinator *Coordinator) RecvFromBroker(
 // request.
 func (coordinator *Coordinator) Work(
 	serviceName string, request []string) (response []string) {
-	x := mdapi.Mdwrk{}
+	x := mdapi.Mdwrk{
+		ID: 1,
+	}
 	return service.LoadService(&x, serviceName, request)
 }
 

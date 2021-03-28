@@ -5,6 +5,6 @@ broker:
   port: 5555
 
 actor:
-  services:
+  services:     # List the services here that the actor is capable of deploying.
     - "echo"
     - "sumnums"

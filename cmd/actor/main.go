@@ -23,6 +23,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	loadableServices := config.GetActorServices(configPath)
 
 	brokerHostname := configuration.Broker.Hostname
 	if brokerHostname == "*" {
@@ -31,6 +32,6 @@ func main() {
 
 	brokerEndpoint := fmt.Sprintf(
 		"tcp://%s:%d", brokerHostname, configuration.Broker.Port)
-	actor := act.NewActor(actorName, brokerEndpoint, verbose)
+	actor := act.NewActor(actorName, loadableServices, brokerEndpoint, verbose)
 	actor.RunService("echo")
 }

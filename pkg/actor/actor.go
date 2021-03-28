@@ -14,7 +14,8 @@ type Actor struct {
 
 
 // NewActor constructs a new actor.
-func NewActor(name string, broker string, verbose bool) (actor *Actor) {
+func NewActor(
+	name string, loadableServices []string, broker string, verbose bool) (actor *Actor) {
 	actor = &Actor{
 		name: name,
 		verbose: verbose,
@@ -25,6 +26,7 @@ func NewActor(name string, broker string, verbose bool) (actor *Actor) {
 		broker: broker,
 		verbose: verbose,
 		service: "echo",		// FIXME: Meant to be a list of available services read from config file.
+		loadableServices: loadableServices,
 		heartbeat: 2500 * time.Millisecond,
 		reconnect: 2500 * time.Millisecond,
 	}
