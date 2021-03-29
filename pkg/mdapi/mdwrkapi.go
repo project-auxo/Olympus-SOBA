@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/google/uuid"
 	zmq "github.com/pebbe/zmq4"
 
 	"github.com/Project-Auxo/Olympus/pkg/util"
@@ -18,7 +19,7 @@ const (
 
 // Mdwrk is the Majordomo Protocol Worker API.
 type Mdwrk struct {
-	ID int
+	id uuid.UUID
 	broker string
 	service string
 	worker *zmq.Socket	// Socket to broker.
@@ -30,11 +31,16 @@ type Mdwrk struct {
 	liveness int 	// How many attempts left.
 	heartbeat time.Duration		// Heartbeat delay, msecs.
 	reconnect time.Duration		// Reconnect delay, msecs.
+	timestamp time.Time // When the worker was created.
 
 	expectReply bool		// False only at start.
 	replyTo string		// Return identity, if any.
 }
 
+
+func (mdwrk *Mdwrk) GetID() uuid.UUID {
+	return mdwrk.id
+}
 
 // SendToBroker sends a message to the broker.
 func (mdwrk *Mdwrk) SendToBroker(
@@ -86,14 +92,16 @@ func (mdwrk *Mdwrk) ConnectToBroker() (err error) {
 }
 
 // NewMdwrk is a constructor.
-func NewMdwrk(id int, broker, service string, verbose bool) (mdwrk *Mdwrk, err error) {
+func NewMdwrk(
+	id uuid.UUID, broker, service string, verbose bool) (mdwrk *Mdwrk, err error) {
 	mdwrk = &Mdwrk{
-		ID: id,
+		id: id,
 		broker: broker,
 		service: service,
 		verbose: verbose,
 		heartbeat: 2500 * time.Millisecond,
 		reconnect: 2500 * time.Millisecond,
+		timestamp: time.Now(),
 	}
 	err = mdwrk.ConnectToBroker()
 	runtime.SetFinalizer(mdwrk, (*Mdwrk).Close)

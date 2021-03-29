@@ -23,7 +23,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	loadableServices := config.GetActorServices(configPath)
+	loadableServices := configuration.Actor.Services
 
 	brokerHostname := configuration.Broker.Hostname
 	if brokerHostname == "*" {

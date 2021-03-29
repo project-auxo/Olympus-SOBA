@@ -8,13 +8,14 @@ import (
 
 var configPath = "./testdata"
 
-// TestActorServices_Populated checks that the correct actor services are being
+// TestLoadConfig_ActorServices checks that the correct actor services are being
 // loaded in a config file whose actor services are populated.
-func TestActorServices(t *testing.T) {
+func TestLoadConfig_ActorServices(t *testing.T) {
 	expected := []string{"a", "b", "c"}
 	configName := "config_test_populated"
-	if diff := cmp.Diff(
-		expected, GetActorServices(configPath, configName)); diff != "" {
+	configuration, _ := LoadConfig(configPath, configName)
+
+	if diff := cmp.Diff(expected, configuration.Actor.Services); diff != "" {
 			t.Errorf("unexpected actor services diff (-expected, +got): %s", diff)
 	}
 }

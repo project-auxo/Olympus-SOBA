@@ -208,10 +208,8 @@ func (coordinator *Coordinator) RecvFromBroker(
 // request.
 func (coordinator *Coordinator) Work(
 	serviceName string, request []string) (response []string) {
-	x := mdapi.Mdwrk{
-		ID: 1,
-	}
-	return service.LoadService(&x, serviceName, request)
+	worker := mdapi.Mdwrk{}
+	return service.LoadService(&worker, serviceName, request)
 }
 
 // Spawn has the coordinator search through and spawn a worker to answer

@@ -6,7 +6,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Configurations exported.
 type Configurations struct {
 	Multi bool
 	Broker BrokerConfig
@@ -40,11 +39,5 @@ func LoadConfig(configPath ...string) (configuration Configurations, err error) 
 	if err != nil {
 		fmt.Printf("Unable to decode into struct, %v", err)
 	}
-	return
-}
-
-func GetActorServices(configPath ...string) (services []string) {
-	configuration, _ := LoadConfig(configPath...)
-	services = configuration.Actor.Services
 	return
 }
