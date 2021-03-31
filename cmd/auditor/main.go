@@ -14,5 +14,5 @@ func main() {
 	loaderFilePath := *loaderFilePathPtr
 	verbose := *verbosePtr
 
-	auditor.CheckConsistency(loaderFilePath, verbose)
+	auditor.CheckConsistency(verbose, loaderFilePath)
 }

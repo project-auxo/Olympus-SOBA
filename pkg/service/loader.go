@@ -15,17 +15,16 @@ func DispatchRequest(
 	checkService(serviceName)
 
 	switch serviceName {
-	
 	// Client echo does ...
 	case "echo":
 		echo.ClientRequest(client, request)
-
+	// case "sumnums":
 	}
 }
 
 // LoadService is used by the coordinator.
-func LoadService(
-	worker *mdapi.Mdwrk, serviceName string, request []string) (response []string){
+func LoadService(worker *mdapi.Mdwrk, serviceName string, request []string) (
+	response []string) {
 	checkService(serviceName)
 
 	switch serviceName {

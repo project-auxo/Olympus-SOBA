@@ -1,19 +1,20 @@
 package auditor
 
 import (
+	"bytes"
 	"fmt"
-	"log"
 	"go/ast"
+	"go/format"
 	"go/parser"
 	"go/token"
+	"log"
+	"regexp"
 	"strings"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/Project-Auxo/Olympus/pkg/service"
-
 )
-
 
 /*
 																							service folder
@@ -22,12 +23,22 @@ import (
 actor.config --(autogenerate)--> loader.go --(run audit.go) --> validation
 */
 
+// TODO: Errors in the check should return where the error is in the line.
+// TODO: Write an audit tester file.
+// TODO: Declare global error types.
+
+
 
 // CheckConsistency ensures consistency between service/loader.go and the folders found
 // within service/
-func CheckConsistency(serviceFolderPath string, verbose bool) {
+func CheckConsistency(verbose bool, serviceFolderPath ...string) {
+	expectedServices := service.AvailableServices()
 	valid := true
-	loaderFilePath := fmt.Sprintf("%s/loader.go", serviceFolderPath)
+	loaderName := "loader.go"
+	if len(serviceFolderPath) > 1 {
+		loaderName = serviceFolderPath[1]
+	}
+	loaderFilePath := fmt.Sprintf("%s/%s", serviceFolderPath[0], loaderName)
 
 	fset := token.NewFileSet()
 	node, err := parser.ParseFile(fset, loaderFilePath, nil, parser.ParseComments)
@@ -35,25 +46,33 @@ func CheckConsistency(serviceFolderPath string, verbose bool) {
 		log.Fatal(err)
 	}
 
-	if diff := checkImports(node); diff != "" {
+	if diff := checkImports(node, expectedServices); diff != "" {
 		if verbose {
 			fmt.Println("checkImports failed: (-expected, +got)", diff)
 		}
 		valid = false
 	}
+	if diff := checkServiceImplemented(node, fset, expectedServices); diff != "" {
+		if verbose {
+			fmt.Println(
+				"checkServiceImplemented failed: (+not fully implemented)", diff)
+		}
+		valid = false
+	}
 	
-
 	fmt.Println("##############################")
 	if valid {
 		fmt.Println("OK: All audit checks passed.")
 	}else {
 		fmt.Println("Audit check(s) failed.")
 	}
+	fmt.Println("##############################")
 }
 
-func checkImports(node *ast.File) (diff string) {
+// checkImports checks that the service imports correspond to those found within
+// the service folder.
+func checkImports(node *ast.File, expectedServices []string) (diff string) {
 	targetWord := "service"
-	expected := service.AvailableServices() // The folders that exist in service/
 	var loaderImports []string
 
 	for _, i := range node.Imports {
@@ -64,6 +83,60 @@ func checkImports(node *ast.File) (diff string) {
 			loaderImports = append(loaderImports, pathValue)
 		}
 	}
-	diff = cmp.Diff(expected, loaderImports)
+	diff = cmp.Diff(expectedServices, loaderImports)
 	return
+}
+
+// checkServiceImplemented checks that the service is called with the correct
+// client and actor usage.
+func checkServiceImplemented(
+	node *ast.File, fset *token.FileSet, expectedServices []string) (
+		diff string) {
+	var buf bytes.Buffer
+	for _, fnDeclaration := range node.Decls {
+		fn, ok := fnDeclaration.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		body := fn.Body
+		for _, line := range body.List {
+			format.Node(&buf, fset, line)	
+		}
+	}
+	strBuf := buf.String()
+
+	gotServicesSet := make(map[string]struct{})
+	checkServiceImplementedHelper(&gotServicesSet, strBuf)
+
+	// Ensure that the x.ClientRequest and x.ActorResponse function calls appear
+	// in the code (implies existence of switch statements on service).
+	for _, service := range expectedServices {
+		clientRequest := fmt.Sprintf("%s.ClientRequest", service)
+		actorResponse := fmt.Sprintf("%s.ActorResponse", service)
+		if strings.Contains(
+			strBuf, clientRequest) && strings.Contains(strBuf, actorResponse) {
+				delete(gotServicesSet, service)
+		}
+	}
+
+	finalGot := make([]string, 0, len(gotServicesSet))
+	for service := range gotServicesSet {
+		finalGot = append(finalGot, service)
+	}
+	diff = cmp.Diff([]string{}, finalGot)
+	return
+}
+
+// checkServiceImplementedHelper is a helper function that finds all the
+// services that *appear* to be implemented in loader.go
+func checkServiceImplementedHelper(
+	gotServiceSet *map[string]struct{}, strBuf string) {
+	re := regexp.MustCompile(`case ".*"`)
+	for _, statement := range re.FindAllString(strBuf, -1) {
+		serviceName := strings.Trim(statement[len("case")+1:], `'"`)
+		if _, ok := (*gotServiceSet)[serviceName]; ok {
+			continue
+		}
+		(*gotServiceSet)[serviceName] = struct{}{}
+	}
 }
