@@ -24,7 +24,6 @@ actor.config --(autogenerate)--> loader.go --(run audit.go) --> validation
 */
 
 // TODO: Errors in the check should return where the error is in the line.
-// TODO: Write an audit tester file.
 // TODO: Declare global error types.
 
 

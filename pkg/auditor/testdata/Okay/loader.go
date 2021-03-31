@@ -4,12 +4,8 @@ import (
 	"github.com/Project-Auxo/Olympus/pkg/mdapi"
 
 	// Import services that can be accessed by the loader here.
-	"github.com/Project-Auxo/Olympus/pkg/service/service-a"
-	"github.com/Project-Auxo/Olympus/pkg/service/service-b"
-
-	// [Only valid for "MISSING" test case]: file fails to import service-c when
-	// it has been found as a service directory by *.AvailableServices("").
-	// "github.com/Project-Auxo/Olympus/pkg/service/service-c"
+	"github.com/Project-Auxo/Olympus/pkg/service/a"
+	"github.com/Project-Auxo/Olympus/pkg/service/b"
 )
 
 // DispatchRequest will load a service from vantage point of the actor.
@@ -19,8 +15,10 @@ func DispatchRequest(
 
 	switch serviceName {
 	// Client a does ...
-	case "service-a":
+	case "a":
 		a.ClientRequest(client, request)
+	case "b":
+		b.ClientRequest(client, request)
 	}
 }
 
@@ -31,8 +29,10 @@ func LoadService(worker *mdapi.Mdwrk, serviceName string, request []string) (
 
 	switch serviceName {
 	// Actor a does ...
-	case "service-a":
-		response = a.ActorResponse(worker, request)
+	case "a":
+		response = service-a.ActorResponse(worker, request)
+	case "b":
+		response = b.ActorResponse(worker, request)
 	}
 	return
 }

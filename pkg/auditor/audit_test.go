@@ -27,8 +27,7 @@ func ParserHelper(loaderFileName string) (fset *token.FileSet, node *ast.File) {
 // TestCheckImports tests whether the testLoader.go file makes the correct
 // service imports based on the mock service directory, e.g. testdata/Missing
 func TestCheckImports(t *testing.T) {
-	_, node := ParserHelper("testLoader.go")
-	testImportCases := []struct {
+	importTestCases := []struct {
 		testName string
 		availableServicesPath string
 		expectedResult string
@@ -47,14 +46,14 @@ func TestCheckImports(t *testing.T) {
 		{
 			"Missing",
 			"./testdata/Missing",
-			cmp.Diff(
-				[]string{"service-a", "service-b", "service-c"},
-				[]string{"service-a", "service-b"}),
+			cmp.Diff([]string{"a", "b", "c"}, []string{"a", "b"}),
 		},
 	}
-	for _, tc := range testImportCases {
+
+	for _, tc := range importTestCases {
 		t.Run(tc.testName, func(t *testing.T) {
 			availableServices := service.AvailableServices(tc.availableServicesPath)
+			_, node := ParserHelper(fmt.Sprintf("%s/loader.go", tc.testName))
 			got, _ := checkImports(node, availableServices)
 			if got != tc.expectedResult {
 				t.Errorf(
@@ -65,3 +64,39 @@ func TestCheckImports(t *testing.T) {
 	}
 }
 
+
+func TestCheckServiceImplemented(t *testing.T) {
+	serviceImplementedTestCases := []struct {
+		testName string
+		availableServicesPath string
+		expectedResult string
+	}{
+		// Okay test case ensures that the correct calls are made for each service
+		// on the client and actor side.
+		{
+			"Okay",
+			"./testdata/Okay",
+			"",
+		},
+		// Missing test case to see whether checkServiceImplemented can detect when
+		// calls on the client or actor side are missing.
+		{
+			"Missing",
+			"./testdata/Missing",
+			cmp.Diff([]string{}, []string{"b"}),
+		},
+	}
+
+	for _, tc := range serviceImplementedTestCases {
+		t.Run(tc.testName, func (t *testing.T) {
+			availableServices := service.AvailableServices(tc.availableServicesPath)
+			fset, node := ParserHelper(fmt.Sprintf("%s/loader.go", tc.testName))
+			got, _ := checkServiceImplemented(node, fset, availableServices)
+			if got != tc.expectedResult {
+				t.Errorf(
+					"one or more available services not correctly implemented: " +
+					"expected: %s, got: %s", tc.expectedResult, got)
+			}
+		})
+	}
+}
