@@ -9,8 +9,11 @@ import (
 
 // AvailableServices returns all the available services in the 'service'
 // directory.
-func AvailableServices() (services []string) {
-	files, err := os.ReadDir("./pkg/service")
+func AvailableServices(serviceFolderPath string) (services []string) {
+	if serviceFolderPath == "" {
+		serviceFolderPath = "./pkg/service"
+	}
+	files, err := os.ReadDir(serviceFolderPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -23,7 +26,7 @@ func AvailableServices() (services []string) {
 }
 
 func checkService(serviceName string) {
-	availableServices := AvailableServices()
+	availableServices := AvailableServices("")
 	_, found := util.Find(availableServices, serviceName)
 	if !found {
 		log.Fatalf("Service '%s' is not implemented.", serviceName)

@@ -32,7 +32,7 @@ actor.config --(autogenerate)--> loader.go --(run audit.go) --> validation
 // CheckConsistency ensures consistency between service/loader.go and the folders found
 // within service/
 func CheckConsistency(verbose bool, serviceFolderPath ...string) {
-	expectedServices := service.AvailableServices()
+	expectedServices := service.AvailableServices("")
 	valid := true
 	loaderName := "loader.go"
 	if len(serviceFolderPath) > 1 {
@@ -46,13 +46,13 @@ func CheckConsistency(verbose bool, serviceFolderPath ...string) {
 		log.Fatal(err)
 	}
 
-	if diff := checkImports(node, expectedServices); diff != "" {
+	if diff, _ := checkImports(node, expectedServices); diff != "" {
 		if verbose {
 			fmt.Println("checkImports failed: (-expected, +got)", diff)
 		}
 		valid = false
 	}
-	if diff := checkServiceImplemented(node, fset, expectedServices); diff != "" {
+	if diff, _ := checkServiceImplemented(node, fset, expectedServices); diff != "" {
 		if verbose {
 			fmt.Println(
 				"checkServiceImplemented failed: (+not fully implemented)", diff)
@@ -71,7 +71,8 @@ func CheckConsistency(verbose bool, serviceFolderPath ...string) {
 
 // checkImports checks that the service imports correspond to those found within
 // the service folder.
-func checkImports(node *ast.File, expectedServices []string) (diff string) {
+func checkImports(node *ast.File, expectedServices []string) (
+	diff string, got []string) {
 	targetWord := "service"
 	var loaderImports []string
 
@@ -84,14 +85,14 @@ func checkImports(node *ast.File, expectedServices []string) (diff string) {
 		}
 	}
 	diff = cmp.Diff(expectedServices, loaderImports)
-	return
+	return diff, loaderImports
 }
 
 // checkServiceImplemented checks that the service is called with the correct
 // client and actor usage.
 func checkServiceImplemented(
 	node *ast.File, fset *token.FileSet, expectedServices []string) (
-		diff string) {
+		diff string, got []string) {
 	var buf bytes.Buffer
 	for _, fnDeclaration := range node.Decls {
 		fn, ok := fnDeclaration.(*ast.FuncDecl)
@@ -106,7 +107,7 @@ func checkServiceImplemented(
 	strBuf := buf.String()
 
 	gotServicesSet := make(map[string]struct{})
-	checkServiceImplementedHelper(&gotServicesSet, strBuf)
+	helperCheckServiceImplemented(&gotServicesSet, strBuf)
 
 	// Ensure that the x.ClientRequest and x.ActorResponse function calls appear
 	// in the code (implies existence of switch statements on service).
@@ -124,12 +125,12 @@ func checkServiceImplemented(
 		finalGot = append(finalGot, service)
 	}
 	diff = cmp.Diff([]string{}, finalGot)
-	return
+	return diff, finalGot
 }
 
-// checkServiceImplementedHelper is a helper function that finds all the
+// helperCheckServiceImplemented is a helper function that finds all the
 // services that *appear* to be implemented in loader.go
-func checkServiceImplementedHelper(
+func helperCheckServiceImplemented(
 	gotServiceSet *map[string]struct{}, strBuf string) {
 	re := regexp.MustCompile(`case ".*"`)
 	for _, statement := range re.FindAllString(strBuf, -1) {
