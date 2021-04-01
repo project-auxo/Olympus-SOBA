@@ -49,7 +49,7 @@ REPLY command consists of a multipart message of 8 or more frames:
 - Frame 4: Empty frame
 - Frame 5: Client address
 - Frame 6: Empty frame
-- Frames 7+: Request body
+- Frames 7+: Reply body
 
 HEARTBEAT command consists of multipart message of 4+ frames:
 - Frame 0: Empty frame
