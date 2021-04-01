@@ -34,18 +34,6 @@ const (
 )
 
 
-func popStr(ss []string) (s string, ss2 []string) {
-	s = ss[0]
-	ss2 = ss[1:]
-	return
-}
-
-func popMsg(msgs [][]string) (msg []string, msgs2 [][]string) {
-	msg = msgs[0]
-	msgs2 = msgs[1:]
-	return
-}
-
 func popActor(actors []*Actor) (actor *Actor, actors2 []*Actor) {
 	actor = actors[0]
 	actors2 = actors[1:]
@@ -180,9 +168,9 @@ func (broker *Broker) Handle() {
 			if broker.verbose {
 				log.Printf("I: received message: %q\n", msg)
 			}
-			sender, msg := popStr(msg)
-			_, msg = popStr(msg)
-			header, msg := popStr(msg)
+			sender, msg := util.PopStr(msg)
+			_, msg = util.PopStr(msg)
+			header, msg := util.PopStr(msg)
  
 			switch header {
 			case mdapi.MdpcClient:
@@ -214,7 +202,7 @@ func (broker *Broker) ActorMsg(sender string, msg []string) {
 		panic("len(msg) == 0")
 	}
 
-	command, msg := popStr(msg)
+	command, msg := util.PopStr(msg)
 	actor := broker.ActorRequire(sender)
 
 
@@ -228,8 +216,8 @@ func (broker *Broker) ActorMsg(sender string, msg []string) {
 			broker.addServices(msg, actor)
 		}
 	case mdapi.MdpReply:
-		serviceName, msg := popStr(msg)
-		_, msg = popStr(msg)
+		serviceName, msg := util.PopStr(msg)
+		_, msg = util.PopStr(msg)
 		client, msg := util.Unwrap(msg)		// msg is reply body.
 		broker.socket.SendMessage(
 			client, "", mdapi.MdpcClient, serviceName, msg)
@@ -252,7 +240,7 @@ func (broker *Broker) ClientMsg(sender string, msg []string) {
 		panic("len(msg) < 2")
 	}
 
-	serviceFrame, msg := popStr(msg)
+	serviceFrame, msg := util.PopStr(msg)
 	service := broker.ServiceRequire(serviceFrame)
 
 	// Set reply return identity to client sender.
@@ -328,7 +316,7 @@ func (service *Service) Dispatch(msg []string) {
 		actor, service.broker.actorServiceMap[service.name] = popActor(
 			dispatchableActors)
 		
-		msg, service.requests = popMsg(service.requests)
+		msg, service.requests = util.PopMsg(service.requests)
 		actor.Send(mdapi.MdpRequest, service.name, msg)
 	}
 }
