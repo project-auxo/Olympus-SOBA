@@ -5,6 +5,8 @@ broker:
   port: 5555
 
 actor:
+  hostname: "inproc://workers" # "*"
+  port: 5556
   services:     # List the services here that the actor is capable of deploying.
     - "echo"
     - "sumnums"

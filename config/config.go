@@ -18,6 +18,8 @@ type BrokerConfig struct {
 }
 
 type ActorConfig struct {
+	Hostname string
+	Port int
 	Services []string `yaml:"services"`
 }
 
