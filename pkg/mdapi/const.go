@@ -9,6 +9,8 @@ const (
 	MdpActor = "SOBAA01"
 )
 
+// TODO: Make this neater so that documentation parses through it better.
+// TODO: Change the order of the serviceName framing.
 /* MDP/Server commands, as strings.
 
 -------------------------- Client ----------------------------------

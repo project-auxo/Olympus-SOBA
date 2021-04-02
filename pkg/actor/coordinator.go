@@ -4,11 +4,13 @@ import (
 	"log"
 	"time"
 
+	// "github.com/google/uuid"
 	zmq "github.com/pebbe/zmq4"
 
 	"github.com/Project-Auxo/Olympus/pkg/mdapi"
-	"github.com/Project-Auxo/Olympus/pkg/service"
 	"github.com/Project-Auxo/Olympus/pkg/util"
+	// "github.com/Project-Auxo/Olympus/pkg/service"
+	// "github.com/Project-Auxo/Olympus/pkg/util"
 )
 
 /*
@@ -31,14 +33,14 @@ const (
 
 type Coordinator struct {
 	// workerSocket *zmq.Socket 
-	brokerSocket *zmq.Socket
-	broker string 	// Coordinator binds to this endpoint.
+	brokerSocket *zmq.Socket		// Interface with the broker.
+	workerSocket *zmq.Socket		// Interface with the internal workers.
+	broker string 	// Coordinator connects to broker through this endpoint.
+	endpoint string // Coordinator binds to this endpoint.
 	poller *zmq.Poller
 
 	verbose bool 	// Print activity to stdout
 	// services map[string]*mdapi.Mdwrk		// Hash of current running services.
-
-	service string		// FIXME: Delete me
 	loadableServices []string
 
 	// Heartbeat management.
@@ -46,9 +48,69 @@ type Coordinator struct {
 	liveness int	// How many attempts left.
 	heartbeat time.Duration 	// Heartbeat delay, msecs.
 	reconnect time.Duration // Reconnect delay, msecs.
+}
 
-	expectReply  bool 		// False only at start.
-	replyTo	string		// Return identity, if any.
+
+// NewCoordinator is the constructor for the coordinator.
+func NewCoordinator(
+	broker string,
+	endpoint string,
+	loadableServices []string,
+	verbose bool) (coordinator *Coordinator, err error) {
+	// Initialize broker state.
+	coordinator = &Coordinator{
+		broker: broker,
+		endpoint: endpoint,
+		loadableServices: loadableServices,
+		heartbeat: 2500 * time.Millisecond,
+		reconnect: 2500 * time.Millisecond,
+		verbose: verbose,
+	}
+	coordinator.workerSocket, err = zmq.NewSocket(zmq.ROUTER)
+	return
+}
+
+
+// Binds will bind the coordinator instance to an endpoint. Use 
+func (coordinator *Coordinator) Bind(endpoint string) (err error) {
+	err = coordinator.workerSocket.Bind(endpoint)
+	if err != nil {
+		log.Printf(
+			"E: coordinator failed to bind at %s", endpoint)
+	}
+	log.Printf("I: Coordinator is active at %s", endpoint)
+	return
+}
+
+func (coordinator *Coordinator) Close() {
+	if coordinator.brokerSocket != nil {
+		coordinator.brokerSocket.Close()
+		coordinator.brokerSocket = nil
+	}
+}
+
+// HandleRequests will handle various requests.
+func (coordinator *Coordinator) HandleRequests() {
+	var reply []string
+	for {
+		msg, _ := coordinator.RecvFromBroker(reply)
+		/* msg is of the form
+			Frame 0: Service name
+			Frame 1: Sender identity
+			Frame 2: Empty
+			Frame 3+: Request payload
+		*/
+		serviceName, msg := util.PopStr(msg)
+		senderIdentity, payload := util.Unwrap(msg)
+		replyPayload := coordinator.Work(serviceName, senderIdentity, payload)
+	
+		reply = make([]string, 4, 4+len(replyPayload))
+		reply = append(reply, replyPayload...)
+		reply[3] = ""
+		reply[2] = senderIdentity
+		reply[1] = ""
+		reply[0] = serviceName
+	}
 }
 
 
@@ -85,8 +147,8 @@ func (coordinator *Coordinator) ConnectToBroker() (err error) {
 		coordinator.brokerSocket.Close()
 		coordinator.brokerSocket = nil
 	}
-	coordinator.brokerSocket, err = zmq.NewSocket(zmq.DEALER)
-	err = coordinator.brokerSocket.Connect(coordinator.broker)
+	coordinator.brokerSocket, _ = zmq.NewSocket(zmq.DEALER)
+	coordinator.brokerSocket.Connect(coordinator.broker)
 	if coordinator.verbose {
 		log.Printf("I: connecting to broker at %s...\n", coordinator.broker)
 	}
@@ -109,21 +171,15 @@ func (coordinator *Coordinator) ConnectToBroker() (err error) {
 func (coordinator *Coordinator) RecvFromBroker(
 	reply []string) (msg []string, err error) {
 	// Format and send the reply if we were provided one.
-	if len(reply) == 0 && coordinator.expectReply {
-		panic("No reply when expected.")
-	}
 	if len(reply) > 0 {
-		if coordinator.replyTo == "" {
-			panic("coordinator.replyTo == \"\"")
+		replyTo := reply[2]
+		if replyTo == "" {
+			panic("replyTo == \"\"")
 		}
-		m := make([]string, 2, 2+len(reply))
-		m = append(m, reply...)
-		m[0] = coordinator.replyTo
-		m[1] = ""
-		_ = coordinator.SendToBroker(mdapi.MdpReply, "", m)
+		_ = coordinator.SendToBroker(mdapi.MdpReply, "", reply)
 	}
-	coordinator.expectReply = true 
 
+	// Received next request or other command.
 	for {
 		var polled []zmq.Polled
 		polled, err = coordinator.poller.Poll(coordinator.heartbeat)
@@ -156,12 +212,7 @@ func (coordinator *Coordinator) RecvFromBroker(
 			msg = msg[3:]
 			switch command {
 			case mdapi.MdpRequest:
-				// Pop and save as many addresses as there are up to a nil, for now save
-				// one.
-				coordinator.replyTo, msg = util.Unwrap(msg)
-				// Here is where we actually have a message to process; we return it to
-				// the caller.
-				return		// We have a request to process
+				return		// We have a request to process.
 			case mdapi.MdpHeartbeat:
 				// Do nothing on heartbeats.
 			case mdapi.MdpDisconnect:
@@ -192,30 +243,18 @@ func (coordinator *Coordinator) RecvFromBroker(
 
 // ----------------- Worker Interface ------------------------
 
-// Binds will bind the coordinator instance to an endpoint. We use single socket
-// for connection to workers and then to broker.
-// func (coordinator *Coordinator) Bind(endpoint string) (err error) {
-// 	err = coordinator.socket.Bind(endpoint)
-// 	if err != nil {
-// 		log.Printf(
-// 			"E: coordinator failed to bind at %s", endpoint)
-// 	}
-// 	log.Printf("I: Coordinator is active at %s", endpoint)
-// 	return
-// }
-
 // Work has the coordinator spawn and use a worker to respond to a client
 // request.
-func (coordinator *Coordinator) Work(
-	serviceName string, request []string) (response []string) {
-	worker := mdapi.Mdwrk{}
-	return service.LoadService(&worker, serviceName, request)
+func (coordinator *Coordinator) Work(serviceName string, replyTo string,
+	requestPayload []string) (response []string) {
+	// id := uuid.New()
+	// worker, _ := mdapi.NewMdwrk(id, serviceName, "inproc://workers", true, "worker1")
+	// return service.LoadService(worker, serviceName, request)
+	return requestPayload
 }
 
-// Spawn has the coordinator search through and spawn a worker to answer
-// a service request.
-func (coordinator *Coordinator) Spawn(service string) {
-	// When spawning a worker, worker connects to the coordinator via inproc
-	// transport.
+func (coordinator *Coordinator) SendToWorker(identity string, msg []string) {
+
 }
+
 

@@ -1,9 +1,5 @@
 package actor
 
-import (
-	"log"
-	"time"
-)
 
 type Actor struct {
 	name string
@@ -15,51 +11,29 @@ type Actor struct {
 
 // NewActor constructs a new actor.
 func NewActor(
-	name string, loadableServices []string, broker string, verbose bool) (actor *Actor) {
+	name string,
+	loadableServices []string,
+	broker string, endpoint string, verbose bool) (actor *Actor) {
 	actor = &Actor{
 		name: name,
 		verbose: verbose,
 		broker: broker,
 	}
 	// Spawn coordinator.
-	coordinator := &Coordinator{
-		broker: broker,
-		verbose: verbose,
-		service: "echo",		// FIXME: Meant to be a list of available services read from config file.
-		loadableServices: loadableServices,
-		heartbeat: 2500 * time.Millisecond,
-		reconnect: 2500 * time.Millisecond,
-	}
+	coordinator, _ := NewCoordinator(broker, endpoint, loadableServices, verbose)
 	actor.coordinator = coordinator
 	actor.coordinator.ConnectToBroker()
-	// runtime.SetFinalizer(actor, (*Actor).Close)
-
-	if verbose {
-		log.Println("Initialized new actor", name)
-	}
 	return
 }
 
 // Close destroys the actor -- make sure to cleanly close it's constituing 
 // components.
 func (actor *Actor) Close() {
-	if actor.coordinator != nil {
-		actor.coordinator.brokerSocket.Close()
-		actor.coordinator.brokerSocket = nil
-	}
+	actor.coordinator.Close()
 }
 
-// RunService runs a service of a particular name.
-func (actor *Actor) RunService(serviceName string) {
-	var err error
-	var request, reply []string
-	for {
-		request, err = actor.coordinator.RecvFromBroker(reply)
-		if err != nil {
-			break 		// Actor was interrupted.
-		}
-		reply = actor.coordinator.Work(serviceName, request)
-	}
-	log.Println(err)
+// TODO: This function feels like it's in a weird spot.
+func (actor *Actor) Run() {
+	actor.coordinator.HandleRequests()
 }
 

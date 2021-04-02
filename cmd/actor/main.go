@@ -29,9 +29,17 @@ func main() {
 	if brokerHostname == "*" {
 		brokerHostname = "localhost"
 	}
-
-	brokerEndpoint := fmt.Sprintf(
+	broker := fmt.Sprintf(
 		"tcp://%s:%d", brokerHostname, configuration.Broker.Port)
-	actor := act.NewActor(actorName, loadableServices, brokerEndpoint, verbose)
-	actor.RunService("echo")
+
+	actorHostname := configuration.Actor.Hostname
+	if actorHostname == "*" {
+		actorHostname = "localhost"
+	}
+	actorEndpoint := fmt.Sprintf(
+		"tcp://%s:%d", actorHostname, configuration.Actor.Port)
+
+	actor := act.NewActor(
+		actorName, loadableServices, broker, actorEndpoint, verbose)
+	actor.Run()
 }

@@ -18,7 +18,6 @@ func DispatchRequest(
 	// Client echo does ...
 	case "echo":
 		echo.ClientRequest(client, request)
-	// case "sumnums":
 	}
 }
 
