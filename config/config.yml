@@ -9,4 +9,3 @@ actor:
   port: 5556
   services:     # List the services here that the actor is capable of deploying.
     - "echo"
-    - "sumnums"

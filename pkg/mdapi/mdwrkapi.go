@@ -8,6 +8,8 @@ import (
 	zmq "github.com/pebbe/zmq4"
 )
 
+// TODO: Replace all "mdwrk" with "worker" to get consistency across codebase.
+
 // Mdwrk is the Majordomo Protocol Worker API.
 type Mdwrk struct {
 	id uuid.UUID
@@ -83,14 +85,27 @@ func (mdwrk *Mdwrk) SendToCoordinator(
 		m[0] = ""
 
 		if mdwrk.verbose {
-			log.Printf("worker: sending %s to coordinator %q\n", MdpsCommands[command], m)
+			log.Printf(
+				"worker: sending %s to coordinator %q\n", MdpsCommands[command], m)
 		}
 		_, err = mdwrk.coordinatorSocket.SendMessage(m)
 		return
 }
 
 
-func (mdwrk *Mdwrk) RecvRequestFromCoordinator() (request []string) {
-	request, _ = mdwrk.coordinatorSocket.RecvMessage(0)
-	return
+func (mdwrk *Mdwrk) RecvFromCoordinator() (request []string) {
+	msg, _ := mdwrk.coordinatorSocket.RecvMessage(0)
+	command := msg[2]
+
+	switch command {
+	case MdpRequest:
+		msg = append(msg, mdwrk.id.String())
+		return msg[6:]
+	case MdpDisconnect:
+		if mdwrk.verbose {
+			log.Printf("Worker %s killing self.", mdwrk.id.String())
+		}
+		mdwrk.Close()
+	}
+	return []string{""}
 }

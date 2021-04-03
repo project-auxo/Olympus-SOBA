@@ -217,7 +217,6 @@ func (broker *Broker) ActorMsg(sender string, msg []string) {
 		}
 	case mdapi.MdpReply:
 		serviceName, msg := util.PopStr(msg)
-		_, msg = util.PopStr(msg)
 		client, msg := util.Unwrap(msg)		// msg is reply body.
 		broker.socket.SendMessage(
 			client, "", mdapi.MdpcClient, serviceName, msg)

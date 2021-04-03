@@ -225,9 +225,6 @@ func (coordinator *Coordinator) RecvFromBroker(
 
 // ----------------- Worker Interface ------------------------
 
-// TODO: Probably something here about making this for loop a separate go routine
-// and have the handle request be the thing that spawns a single worker into its own thread.
-// HandleRequests will handle various requests.
 func (coordinator *Coordinator) HandleRequests() {
 	var reply []string
 	msg, _ := coordinator.RecvFromBroker(reply)
@@ -244,15 +241,16 @@ func (coordinator *Coordinator) HandleRequests() {
 
 	id := uuid.New()
 	go coordinator.SpawnWorker(id, serviceName, replyPayload)
-	coordinator.SendToWorker(id.String(), msg)
+	coordinator.SendToWorker(id.String(), mdapi.MdpRequest, msg)
 
-	reply = make([]string, 4, 4+len(replyPayload))
+	reply = make([]string, 3, 3+len(replyPayload))
 	reply = append(reply, <-replyPayload...)
-	reply[3] = ""
-	reply[2] = senderIdentity
-	reply[1] = ""
+	reply[2] = ""
+	reply[1] = senderIdentity
 	reply[0] = serviceName
 
+	// Work is complete, kill the worker.
+	coordinator.KillWorker(id)
 	coordinator.SendToBroker(mdapi.MdpReply, "", reply)
 }
 
@@ -263,15 +261,35 @@ func (coordinator *Coordinator) SpawnWorker(
 	coordinator.runningWorkers[id.String()] = worker
 	coordinator.workerSocket.RecvMessage(0) // Blocking.
 
-	request := worker.RecvRequestFromCoordinator()
+	request := worker.RecvFromCoordinator()	// FIXME: Remove this, worker should handle its internals.
 	replyPayload <- service.LoadService(worker, serviceName, request)
 }
 
+func (coordinator *Coordinator) KillWorker(id uuid.UUID) {
+	worker, ok := coordinator.runningWorkers[id.String()]
+	if !ok {
+		log.Fatalf("worker %s does not exist", id.String())
+	}
+	coordinator.SendToWorker(id.String(), mdapi.MdpDisconnect, []string{""})
+	worker.RecvFromCoordinator() // FIXME: Remove this, worker should handle its internals.
+	delete(coordinator.runningWorkers, id.String())
+}
 
-func (coordinator *Coordinator) SendToWorker(identity string, msg []string) {
-	m := make([]string, 2, 2+len(msg))
+
+func (coordinator *Coordinator) SendToWorker(
+	identity string, command string, msg []string) {
+	/*
+	Frame 0: Worker identity
+	Frame 1: ""
+	Frame 2: Command
+	Frame 3: ""
+	Frame 4+: msg
+	*/
+	m := make([]string, 4, 4+len(msg))
 	m = append(m, msg...)
 	m[0] = identity
 	m[1] = ""
-	coordinator.workerSocket.SendMessage(msg)
+	m[2] = command
+	m[3] = ""
+	coordinator.workerSocket.SendMessage(m)
 }
