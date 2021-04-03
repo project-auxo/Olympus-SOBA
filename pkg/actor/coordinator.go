@@ -4,13 +4,12 @@ import (
 	"log"
 	"time"
 
-	// "github.com/google/uuid"
+	"github.com/google/uuid"
 	zmq "github.com/pebbe/zmq4"
 
 	"github.com/Project-Auxo/Olympus/pkg/mdapi"
 	"github.com/Project-Auxo/Olympus/pkg/util"
-	// "github.com/Project-Auxo/Olympus/pkg/service"
-	// "github.com/Project-Auxo/Olympus/pkg/util"
+	"github.com/Project-Auxo/Olympus/pkg/service"
 )
 
 /*
@@ -31,6 +30,11 @@ const (
 	heartbeatLiveness = 3
 )
 
+const (
+	workersEndpoint = "inproc://workers"
+)
+
+
 type Coordinator struct {
 	// workerSocket *zmq.Socket 
 	brokerSocket *zmq.Socket		// Interface with the broker.
@@ -38,6 +42,8 @@ type Coordinator struct {
 	broker string 	// Coordinator connects to broker through this endpoint.
 	endpoint string // Coordinator binds to this endpoint.
 	poller *zmq.Poller
+
+	runningWorkers map[string]*mdapi.Mdwrk
 
 	verbose bool 	// Print activity to stdout
 	// services map[string]*mdapi.Mdwrk		// Hash of current running services.
@@ -62,21 +68,21 @@ func NewCoordinator(
 		broker: broker,
 		endpoint: endpoint,
 		loadableServices: loadableServices,
+		runningWorkers: make(map[string]*mdapi.Mdwrk),
 		heartbeat: 2500 * time.Millisecond,
 		reconnect: 2500 * time.Millisecond,
 		verbose: verbose,
 	}
-	coordinator.workerSocket, err = zmq.NewSocket(zmq.ROUTER)
+	coordinator.workerSocket, err = zmq.NewSocket(zmq.DEALER)
 	return
 }
 
 
-// Binds will bind the coordinator instance to an endpoint. Use 
+// Binds will bind the coordinator instance to an endpoint. 
 func (coordinator *Coordinator) Bind(endpoint string) (err error) {
 	err = coordinator.workerSocket.Bind(endpoint)
 	if err != nil {
-		log.Printf(
-			"E: coordinator failed to bind at %s", endpoint)
+		log.Fatalf("E: coordinator failed to bind at %s", endpoint)
 	}
 	log.Printf("I: Coordinator is active at %s", endpoint)
 	return
@@ -86,30 +92,6 @@ func (coordinator *Coordinator) Close() {
 	if coordinator.brokerSocket != nil {
 		coordinator.brokerSocket.Close()
 		coordinator.brokerSocket = nil
-	}
-}
-
-// HandleRequests will handle various requests.
-func (coordinator *Coordinator) HandleRequests() {
-	var reply []string
-	for {
-		msg, _ := coordinator.RecvFromBroker(reply)
-		/* msg is of the form
-			Frame 0: Service name
-			Frame 1: Sender identity
-			Frame 2: Empty
-			Frame 3+: Request payload
-		*/
-		serviceName, msg := util.PopStr(msg)
-		senderIdentity, payload := util.Unwrap(msg)
-		replyPayload := coordinator.Work(serviceName, senderIdentity, payload)
-	
-		reply = make([]string, 4, 4+len(replyPayload))
-		reply = append(reply, replyPayload...)
-		reply[3] = ""
-		reply[2] = senderIdentity
-		reply[1] = ""
-		reply[0] = serviceName
 	}
 }
 
@@ -243,18 +225,53 @@ func (coordinator *Coordinator) RecvFromBroker(
 
 // ----------------- Worker Interface ------------------------
 
-// Work has the coordinator spawn and use a worker to respond to a client
-// request.
-func (coordinator *Coordinator) Work(serviceName string, replyTo string,
-	requestPayload []string) (response []string) {
-	// id := uuid.New()
-	// worker, _ := mdapi.NewMdwrk(id, serviceName, "inproc://workers", true, "worker1")
-	// return service.LoadService(worker, serviceName, request)
-	return requestPayload
+// TODO: Probably something here about making this for loop a separate go routine
+// and have the handle request be the thing that spawns a single worker into its own thread.
+// HandleRequests will handle various requests.
+func (coordinator *Coordinator) HandleRequests() {
+	var reply []string
+	msg, _ := coordinator.RecvFromBroker(reply)
+	/* msg is of the form
+		Frame 0: Service name
+		Frame 1: Sender identity
+		Frame 2: Empty
+		Frame 3+: Request payload
+	*/
+
+	serviceName, msg := util.PopStr(msg)	
+	senderIdentity, _ := util.Unwrap(msg)
+	replyPayload := make(chan []string)
+
+	id := uuid.New()
+	go coordinator.SpawnWorker(id, serviceName, replyPayload)
+	coordinator.SendToWorker(id.String(), msg)
+
+	reply = make([]string, 4, 4+len(replyPayload))
+	reply = append(reply, <-replyPayload...)
+	reply[3] = ""
+	reply[2] = senderIdentity
+	reply[1] = ""
+	reply[0] = serviceName
+
+	coordinator.SendToBroker(mdapi.MdpReply, "", reply)
 }
+
+func (coordinator *Coordinator) SpawnWorker(
+	id uuid.UUID, serviceName string, replyPayload chan []string) {
+	worker, _ := mdapi.NewMdwrk(
+		id, serviceName, workersEndpoint, true, id.String())
+	coordinator.runningWorkers[id.String()] = worker
+	coordinator.workerSocket.RecvMessage(0) // Blocking.
+
+	request := worker.RecvRequestFromCoordinator()
+	replyPayload <- service.LoadService(worker, serviceName, request)
+}
+
 
 func (coordinator *Coordinator) SendToWorker(identity string, msg []string) {
-
+	m := make([]string, 2, 2+len(msg))
+	m = append(m, msg...)
+	m[0] = identity
+	m[1] = ""
+	coordinator.workerSocket.SendMessage(msg)
 }
-
-

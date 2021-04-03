@@ -32,9 +32,7 @@ func NewMdwrk(
 	verbose: verbose,
 	}
 	err = mdwrk.ConnectToCoordinator(identity)
-	// Let coordinator know that worker is ready.
 	mdwrk.SendToCoordinator(MdpReady, "", []string{})
-
 	runtime.SetFinalizer(mdwrk, (*Mdwrk).Close)
 	return
 }
@@ -54,14 +52,13 @@ func (mdwrk *Mdwrk) Close() {
 
 func (mdwrk *Mdwrk) ConnectToCoordinator(identity string) (err error) {
 	mdwrk.Close()
-
 	mdwrk.coordinatorSocket, _ = zmq.NewSocket(zmq.DEALER)
 	if identity != "" {
 		mdwrk.coordinatorSocket.SetIdentity(identity)
 	}
 	err = mdwrk.coordinatorSocket.Connect(mdwrk.coordinator)
 	if mdwrk.verbose {
-		log.Printf("I: connecting to coordinator at %s...\n", mdwrk.coordinator)
+		log.Printf("worker: connecting to coordinator at %s...\n", mdwrk.coordinator)
 	}
 	return
 }
@@ -86,16 +83,14 @@ func (mdwrk *Mdwrk) SendToCoordinator(
 		m[0] = ""
 
 		if mdwrk.verbose {
-			log.Printf("I: sending %s to coordinator %q\n", MdpsCommands[command], m)
+			log.Printf("worker: sending %s to coordinator %q\n", MdpsCommands[command], m)
 		}
 		_, err = mdwrk.coordinatorSocket.SendMessage(m)
 		return
 }
 
 
-func (mdwrk *Mdwrk) Recv() (msg []string, err error) {
-	for {
-		msg, _ := mdwrk.coordinatorSocket.RecvMessage(0)
-		log.Println(msg)
-	}
+func (mdwrk *Mdwrk) RecvRequestFromCoordinator() (request []string) {
+	request, _ = mdwrk.coordinatorSocket.RecvMessage(0)
+	return
 }
