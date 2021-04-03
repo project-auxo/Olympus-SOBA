@@ -1,0 +1,71 @@
+syntax = "proto3";
+package mdapi;
+
+option go_package = "github.com/Project-Auxo/Olympus/proto/mdapi;mdapi";
+
+import "google/protobuf/timestamp.proto";
+
+
+enum CommandTypes {
+  READY = 0;
+  REQUEST = 1;
+  REPLY = 2;
+  HEARTBEAT = 3;
+  DISCONNECT = 4;
+}
+
+enum Entities {
+  BROKER = 0;
+  ACTOR = 1;
+  CLIENT = 3;
+  WORKER = 4;
+}
+
+message Body {
+  repeated string body = 1;
+  int32 length = 2;
+}
+
+// Header is the identification of the producer of the message and the type of
+// message.
+message Header {
+  CommandTypes type = 1;
+  Entities entity = 2;
+  string origin = 3;
+  string address = 4;
+}
+
+message Ready {
+  repeated string available_services = 1;
+}
+
+message Request {
+  string service_name = 1;
+  Body request_body = 2;
+  int32 num_results = 3;
+}
+
+message Reply {
+  string service_name = 1;
+  string reply_address = 2;
+  Body reply_body = 3;
+}
+
+message Heartbeat {
+  repeated string available_services = 1;
+}
+
+message Disconnect {
+  google.protobuf.Timestamp expiration_time = 1;
+}
+
+message WrapperCommand {
+  Header header = 1;
+  oneof command {
+    Ready ready = 2;
+    Request request = 3;
+    Reply reply = 4;
+    Heartbeat heartbeat = 5;
+    Disconnect disconnect = 6;
+  }
+}
