@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/Project-Auxo/Olympus/config"
 	act "github.com/Project-Auxo/Olympus/pkg/actor"
@@ -33,11 +34,14 @@ func main() {
 		"tcp://%s:%d", brokerHostname, configuration.Broker.Port)
 
 	actorHostname := configuration.Actor.Hostname
-	if actorHostname == "*" {
-		actorHostname = "localhost"
+	actorEndpoint := actorHostname
+	if !strings.Contains(actorHostname, "inproc") {
+		if actorHostname == "*" {
+			actorHostname = "localhost"
+		}
+		actorEndpoint = fmt.Sprintf(
+			"tcp://%s:%d", actorHostname, configuration.Actor.Port)
 	}
-	actorEndpoint := fmt.Sprintf(
-		"tcp://%s:%d", actorHostname, configuration.Actor.Port)
 
 	actor := act.NewActor(
 		actorName, loadableServices, broker, actorEndpoint, verbose)
