@@ -4,6 +4,7 @@ package mdapi;
 option go_package = "github.com/Project-Auxo/Olympus/proto/mdapi;mdapi";
 
 import "google/protobuf/timestamp.proto";
+import "google/protobuf/any.proto";
 
 
 enum CommandTypes {
@@ -41,14 +42,20 @@ message Ready {
 
 message Request {
   string service_name = 1;
-  Body request_body = 2;
-  int32 num_results = 3;
+  oneof request_body {
+    Body body = 2;
+    google.protobuf.Any custom_body = 3; // Some services require custom body.
+  }
+  int32 num_results = 4;
 }
 
 message Reply {
   string service_name = 1;
-  string reply_address = 2;
-  Body reply_body = 3;
+  string reply_address = 2;   // Address to reply to.
+  oneof reply_body {
+    Body body = 3;
+    google.protobuf.Any custom_body = 4;
+  }
 }
 
 message Heartbeat {

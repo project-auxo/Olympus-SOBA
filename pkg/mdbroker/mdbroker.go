@@ -1,15 +1,15 @@
 package mdbroker
 
 import (
-	"fmt"
 	"log"
 	"runtime"
 	"time"
 
 	zmq "github.com/pebbe/zmq4"
+	"google.golang.org/protobuf/proto"
 
-	"github.com/Project-Auxo/Olympus/pkg/util"
 	"github.com/Project-Auxo/Olympus/pkg/mdapi"
+	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 )
 
 /*
@@ -72,7 +72,7 @@ type Broker struct {
 type Service struct {
 	broker *Broker // Broker instance.
 	name string		// Service name.
-	requests [][]string		// List of client requests.
+	requests []*mdapi_pb.WrapperCommand		// List of client requests.
 	attachedActors []*Actor 	// List of actors attached to this service.
 
 	timestamp time.Time
@@ -82,7 +82,7 @@ type Service struct {
 type Actor struct {
 	broker *Broker 	// Broker instance.
 	idString string 	// Identity of actor as a string.
-	identity string 	// Identity frame for routing.
+	identity []byte 	// Identity frame for routing.
 	runningServices []*Service		// Services that actor is participating in.
 
 	expiry time.Time	// Expires at unless heartbeat.
@@ -131,6 +131,52 @@ func (broker *Broker) Bind(endpoint string) (err error) {
 	return
 }
 
+// PackageProto will marshal the given information into the correct bytes
+// package.
+func (broker *Broker) PackageProto(
+	commandType mdapi_pb.CommandTypes, msg []string,
+	args mdapi.Args) (msgProto *mdapi_pb.WrapperCommand, err error){
+		msgProto = &mdapi_pb.WrapperCommand{
+			Header: &mdapi_pb.Header{
+				Type: commandType,
+				Entity: mdapi_pb.Entities_BROKER,
+				Origin: broker.endpoint,
+				Address: broker.endpoint,
+			},
+		}
+
+		switch commandType {
+		case mdapi_pb.CommandTypes_REQUEST:
+			serviceName := args.ServiceName
+			msgProto.Command = &mdapi_pb.WrapperCommand_Request{
+				Request: &mdapi_pb.Request{
+					ServiceName: serviceName,
+					RequestBody: &mdapi_pb.Request_Body{Body: &mdapi_pb.Body{Body: msg},},
+				},
+			}
+		case mdapi_pb.CommandTypes_REPLY:
+			serviceName := args.ServiceName
+			replyAddress := args.ReplyAddress
+			msgProto.Command = &mdapi_pb.WrapperCommand_Reply{
+				Reply: &mdapi_pb.Reply{
+					ServiceName: serviceName,
+					ReplyAddress: replyAddress,
+					ReplyBody: &mdapi_pb.Reply_Body{Body: &mdapi_pb.Body{Body: msg},},
+				},
+			}
+		case mdapi_pb.CommandTypes_HEARTBEAT:
+			msgProto.Command = &mdapi_pb.WrapperCommand_Heartbeat{
+				Heartbeat: &mdapi_pb.Heartbeat{},
+			}
+		case mdapi_pb.CommandTypes_DISCONNECT:
+			// FIXME: Insert the expiration time here.
+			msgProto.Command = &mdapi_pb.WrapperCommand_Disconnect{}
+		default:
+			log.Fatalf("E: uknown commandType %q", commandType)
+		}
+		return
+}
+
 // addServices will add the services that an actor notifies the broker via its
 // mdapi.MdpReady and mdapi.MdpHeartbeat
 func (broker *Broker) addServices(services []string, actor *Actor) {
@@ -161,24 +207,28 @@ func (broker *Broker) Handle() {
 		}
 		// Process next input message, if any.
 		if len(polled) > 0 {
-			msg, err := broker.socket.RecvMessage(0)
+			recvBytes, err := broker.socket.RecvMessageBytes(0)
 			if err != nil {
-				break // Interrupted.
+				break	// Interrupted.
 			}
+			sender := recvBytes[0]
+			msgProto := &mdapi_pb.WrapperCommand{}
+			if err = proto.Unmarshal(recvBytes[1], msgProto); err != nil {
+				log.Fatalln("E: failed to parse wrapper command:", err)
+			}
+			
 			if broker.verbose {
-				log.Printf("I: received message: %q\n", msg)
+				log.Printf("I: received message: %q\n", msgProto)
 			}
-			sender, msg := util.PopStr(msg)
-			_, msg = util.PopStr(msg)
-			header, msg := util.PopStr(msg)
- 
-			switch header {
-			case mdapi.MdpcClient:
-			 broker.ClientMsg(sender, msg)
-			case mdapi.MdpActor:
-			 broker.ActorMsg(sender, msg)
+
+			entity := msgProto.GetHeader().GetEntity()
+			switch entity {
+			case mdapi_pb.Entities_CLIENT:
+			 broker.ClientMsg(msgProto)
+			case mdapi_pb.Entities_ACTOR:
+			 broker.ActorMsg(sender, msgProto)
 			default:
-			 log.Printf("E: invalid message: %q\n", msg)
+			 log.Printf("E: invalid message: %q\n", msgProto)
 			}
 		 }
 		 // Disconnect and delete any expired actors, send hearbeats to idle actors
@@ -186,7 +236,9 @@ func (broker *Broker) Handle() {
 		 if time.Now().After(broker.heartbeatAt) {
 			 broker.Purge()
 			 for _, actor := range broker.actors {
-				 actor.Send(mdapi.MdpHeartbeat, "", []string{})
+					heartbeatProto, _ := broker.PackageProto(
+						mdapi_pb.CommandTypes_HEARTBEAT, []string{}, mdapi.Args{}) 
+				 actor.Send(heartbeatProto)
 			 }
 			 broker.heartbeatAt = time.Now().Add(HeartbeatInterval)
 		 }
@@ -195,70 +247,48 @@ func (broker *Broker) Handle() {
  }
 
 
-// ActorMsg processes on MdpwReady, MdpwReply, MdpwHeartbeat or MdpwDisconnect
-// message sent to the broker by an actor.
-func (broker *Broker) ActorMsg(sender string, msg []string) {
-	if len(msg) == 0 {
-		panic("len(msg) == 0")
-	}
-
-	command, msg := util.PopStr(msg)
+// ActorMsg processes on Ready, Reply, Heartbeat or Disconnect message sent to
+// the broker by an actor.
+func (broker *Broker) ActorMsg(sender []byte, msgProto *mdapi_pb.WrapperCommand) {
+	command := msgProto.GetHeader().GetType()
+	// sender := msgProto.GetHeader().GetOrigin()
 	actor := broker.ActorRequire(sender)
 
-
 	switch command {
-	case mdapi.MdpReady:
-		// Reserved service name, handle internally.
-		if len(sender) >= 4 && sender[:4] == "mmi." {
-			log.Println("I: mmi. services have not yet been implemented.")
-		} else {
-			// Actor notifies broker of its services, update broker's internal state.
-			broker.addServices(msg, actor)
-		}
-	case mdapi.MdpReply:
-		serviceName, msg := util.PopStr(msg)
-		client, msg := util.Unwrap(msg)		// msg is reply body.
-		broker.socket.SendMessage(
-			client, "", mdapi.MdpcClient, serviceName, msg)
-	case mdapi.MdpHeartbeat:
-		broker.addServices(msg, actor) // Actor notifies broker of its services.
+	case mdapi_pb.CommandTypes_READY:
+		// TODO: Implement MMI services that are handled internally.
+		// Actor notifies broker of its services, update broker's internal state.
+		availableServices := msgProto.GetHeartbeat().GetAvailableServices()
+		broker.addServices(availableServices, actor)
+	case mdapi_pb.CommandTypes_REPLY:
+		client := msgProto.GetReply().GetReplyAddress()
+		msgBytes, _ := proto.Marshal(msgProto)
+		broker.socket.SendMessage(client, msgBytes)
+	case mdapi_pb.CommandTypes_HEARTBEAT:
+		availableServices := msgProto.GetHeartbeat().GetAvailableServices()
+		broker.addServices(availableServices, actor)
 		actor.expiry = time.Now().Add(HeartbeatExpiry)
-	case mdapi.MdpDisconnect:
-		actor.Delete(false)
+	case mdapi_pb.CommandTypes_DISCONNECT:
+		broker.DeleteActor(actor, false)
 	default:
-		log.Printf("E: invalid input message %q\n", msg)
+		log.Println("E: invalid input message")
 	}
 }
 
 // ClientMsg processes a request coming from a client. We implement MMI requests
 // directly here (at present, we implement only the mmi.service request).
 // TODO: Implement more of the mmi. internal services.
-func (broker *Broker) ClientMsg(sender string, msg []string) {
-	// Service name + body.
-	if len(msg) < 2 {
-		panic("len(msg) < 2")
+func (broker *Broker) ClientMsg(msgProto *mdapi_pb.WrapperCommand) {
+	command := msgProto.GetHeader().GetType()
+	if command != mdapi_pb.CommandTypes_REQUEST {
+		log.Fatalln("E: client did not issue a request")
 	}
+	serviceName := msgProto.GetRequest().GetServiceName()
+	service := broker.ServiceRequire(serviceName)
 
-	serviceFrame, msg := util.PopStr(msg)
-	service := broker.ServiceRequire(serviceFrame)
+	// TODO: Implement the MMI service requests, which are processed internally.
 
-	// Set reply return identity to client sender.
-	m := []string{sender, ""}
-	msg = append(m, msg...)
-
-	// If we got a MMI service request, process that internally.
-	if len(serviceFrame) >= 4 && serviceFrame[:4] == "mmi." {
-		returnCode := "501"		// Service not implemented.
-		msg[len(msg)-1] = returnCode
-
-		// Remove and save client return envelope and insert the protocol header and
-		// service name, then rewarap envelope.
-		client, msg := util.Unwrap(msg)
-		broker.socket.SendMessage(client, "", mdapi.MdpcClient, serviceFrame, msg)
-	} else {
-		// Else dispatch the message to the requested service.
-		service.Dispatch(msg)
-	}
+	service.Dispatch(msgProto)
 }
 
 
@@ -274,7 +304,7 @@ func (broker *Broker) Purge() {
 		if broker.verbose {
 			log.Println("I: deleting expired actor", actor.idString)
 		}
-		actor.Delete(false)
+		broker.DeleteActor(actor, false)
 	}
 }
 
@@ -283,30 +313,27 @@ func (broker *Broker) Purge() {
 
 // ServiceRequire is a lazy constructor locates a service by name, or creates a
 // new service if there is no service already with that name.
-func (broker *Broker) ServiceRequire(serviceFrame string) (service *Service) {
-	service, ok := broker.runningServices[serviceFrame]
+func (broker *Broker) ServiceRequire(serviceName string) (service *Service) {
+	service, ok := broker.runningServices[serviceName]
 	if !ok {
 		service = &Service{
 			broker: broker,
-			name: serviceFrame,
-			requests: make([][]string, 0),
+			name: serviceName,
+			requests: make([]*mdapi_pb.WrapperCommand, 0),
 			attachedActors: make([]*Actor, 0),
 			timestamp: time.Now(),
 		}
-		broker.waitingServices[serviceFrame] = service
+		broker.waitingServices[serviceName] = service
 		if broker.verbose {
-			log.Println("I: added waiting service:", serviceFrame)
+			log.Println("I: added waiting service:", serviceName)
 		}
 	}
 	return
 }
 
 // Dispatch sends requests to waiting actors.
-func (service *Service) Dispatch(msg []string) {
-	if len(msg) > 0 {
-		// Queue message if any.
-		service.requests = append(service.requests, msg)
-	}
+func (service *Service) Dispatch(msgProto *mdapi_pb.WrapperCommand) {
+	service.requests = append(service.requests, msgProto) // Queue requests.
 	service.broker.Purge()
 	dispatchableActors := service.broker.actorServiceMap[service.name]
 
@@ -315,8 +342,9 @@ func (service *Service) Dispatch(msg []string) {
 		actor, service.broker.actorServiceMap[service.name] = popActor(
 			dispatchableActors)
 		
-		msg, service.requests = util.PopMsg(service.requests)
-		actor.Send(mdapi.MdpRequest, service.name, msg)
+		currMsgProto := service.requests[0]
+		service.requests = service.requests[1:]
+		actor.Send(currMsgProto)
 	}
 }
 
@@ -325,14 +353,14 @@ func (service *Service) Dispatch(msg []string) {
 
 // ActorRequire is a lazy constructor that locates an actor by identity, or
 // returns an error if there is no actor already with that identity.
-func (broker *Broker) ActorRequire(identity string) (actor *Actor) {
-	idString := fmt.Sprintf("%q", identity)
+func (broker *Broker) ActorRequire(sender []byte) (actor *Actor) {
+	idString := string(sender)
 	actor, ok := broker.actors[idString]
 	if !ok {
 		actor = &Actor{
 			broker: broker,
 			idString: idString,
-			identity: identity,
+			identity: sender,
 			expiry: time.Now().Add(HeartbeatExpiry),
 		}
 		broker.actors[idString] = actor
@@ -343,41 +371,26 @@ func (broker *Broker) ActorRequire(identity string) (actor *Actor) {
 	return
 }
 
-// Delete deletes the current actor.
-func (actor *Actor) Delete(disconnect bool) {
+// DeleteActor deletes the selected actor.
+func (broker *Broker) DeleteActor(actor *Actor, disconnect bool) {
 	if disconnect {
-		actor.Send(mdapi.MdpDisconnect, "", []string{})
+		disconnectProto, _ := broker.PackageProto(
+			mdapi_pb.CommandTypes_DISCONNECT, []string{}, mdapi.Args{})
+		actor.Send(disconnectProto)
 	}
-	for serviceName, actors := range actor.broker.actorServiceMap {
-		actor.broker.actorServiceMap[serviceName] = delActor(actors, actor)
+	for serviceName, actors := range broker.actorServiceMap {
+		broker.actorServiceMap[serviceName] = delActor(actors, actor)
 	}
-	delete(actor.broker.actors, actor.idString)
+	delete(broker.actors, actor.idString)
 }
 
 // Send formats and sends a command to a actor. The caller may also provide a
 // command option, and message payload.
-func (actor *Actor) Send(command, option string, msg []string) (err error) {
-	n := 4
-	if option != "" {
-		n++
+func (actor *Actor) Send(msgProto *mdapi_pb.WrapperCommand) (err error) {
+	msgBytes, err := proto.Marshal(msgProto)
+	if err != nil {
+		panic(err)
 	}
-	m := make([]string, n, n+len(msg))
-	m = append(m, msg...)
-
-	// Stack protocol envelope to start of message.
-	if option != "" {
-		m[4] = option
-	}
-	m[3] = command
-	m[2] = mdapi.MdpActor
-
-	// Stack routing envelope to start of message.
-	m[1] = ""
-	m[0] = actor.identity
-
-	if actor.broker.verbose {
-		log.Printf("I: sending %s to actor %q\n", mdapi.MdpsCommands[command], m)
-	}
-	_, err = actor.broker.socket.SendMessage(m)
+	_, err = actor.broker.socket.SendMessage(actor.identity, msgBytes)
 	return
 }

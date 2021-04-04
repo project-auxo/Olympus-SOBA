@@ -1,13 +1,18 @@
 package mdapi
 
-const (
-	// MdpcClient is the implementation of MDP/Client v.01
-	MdpcClient = "MDPC01"
-	// MdpWorker is the implementation of MDP/Worker v.01
-	MdpWorker = "MDPW01"
-	// MdpActor is the implementation of SOBA Actor v.01
-	MdpActor = "SOBAA01"
+import mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
+
+
+var (
+	EntitiesMap = map[mdapi_pb.Entities]string{
+		mdapi_pb.Entities_BROKER:		"BROKER",
+		mdapi_pb.Entities_ACTOR: 		"ACTOR",
+		mdapi_pb.Entities_CLIENT: 	"CLIENT",
+		mdapi_pb.Entities_WORKER: 	"WORKER",
+	}
 )
+
+
 
 // TODO: Make this neater so that documentation parses through it better.
 // TODO: Change the order of the serviceName framing.
@@ -64,21 +69,13 @@ DISCONNECT command consists of a multipart message of 3 frames:
 - Frame 1: mdpActor
 - Frame 2: mdpDisconnect
 */
-const (
-	MdpReady = string(iota + 1)
-	MdpRequest
-	MdpReply
-	MdpHeartbeat
-	MdpDisconnect
-)
 
-// MDP/Server command mappings.
 var (
-	MdpsCommands = map[string]string{
-		MdpReady:      "READY",
-		MdpRequest:    "REQUEST",
-		MdpReply:      "REPLY",
-		MdpHeartbeat:  "HEARTBEAT",
-		MdpDisconnect: "DISCONNECT",
+	CommandMap = map[mdapi_pb.CommandTypes]string{
+		mdapi_pb.CommandTypes_READY:      "READY",
+		mdapi_pb.CommandTypes_REQUEST:    "REQUEST",
+		mdapi_pb.CommandTypes_REPLY:      "REPLY",
+		mdapi_pb.CommandTypes_HEARTBEAT:  "HEARTBEAT",
+		mdapi_pb.CommandTypes_DISCONNECT: "DISCONNECT",
 	}
 )

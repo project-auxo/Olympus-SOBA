@@ -6,6 +6,7 @@ import (
 	"github.com/Project-Auxo/Olympus/pkg/mdapi"
 )
 
+// TODO: This should take an echo proto.
 /*
 Request:
 	-

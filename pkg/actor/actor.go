@@ -20,7 +20,8 @@ func NewActor(
 		broker: broker,
 	}
 	// Spawn coordinator.
-	coordinator, _ := NewCoordinator(broker, endpoint, loadableServices, verbose)
+	coordinator, _ := NewCoordinator(
+		name, broker, endpoint, loadableServices, verbose)
 	actor.coordinator = coordinator
 	actor.coordinator.Bind(endpoint)
 	actor.coordinator.ConnectToBroker()
@@ -35,8 +36,6 @@ func (actor *Actor) Close() {
 
 // TODO: This function feels like it's in a weird spot.
 func (actor *Actor) Run() {
-	for {
-		actor.coordinator.HandleRequests()
-	}
+	actor.coordinator.Run()		// TODO: Move to its own thread/process.
 }
 

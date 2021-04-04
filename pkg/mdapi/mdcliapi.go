@@ -7,10 +7,13 @@ import (
 	"time"
 
 	zmq "github.com/pebbe/zmq4"
+	"google.golang.org/protobuf/proto"
+
+	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 )
 
 var	errPermanent = errors.New("permanent error, abandoning request")
-
+// TODO: Change client to clientSocket
 
 // Mdcli is the Majordomo Protocol Client API.
 type Mdcli struct {
@@ -48,9 +51,7 @@ func (mdcli *Mdcli) ConnectToBroker() (err error) {
 	if err != nil && mdcli.verbose {
 		log.Println(
 			"E: ConnectToBroker() failed to connect to broker", mdcli.broker)
-
 	}
-
 	return
 }
 
@@ -83,33 +84,57 @@ func (mdcli *Mdcli) SetTimeout(timeout time.Duration) {
 	mdcli.timeout = timeout
 }
 
-// Send sends just one message without waiting for reply. Using DEALER socket so
-// we send an empty frame at the start.
-func (mdcli *Mdcli) Send(service string, request ...string) (err error) {
-	// Prefix request with protocol frames.
-	// Frame 0: empty (REQ emulation).
-	// FRAME 1: "MDPCxy" (six bytes, MDP/Client x.y).
-	// FRAME 2: Service name (printable string)
 
-	req := make([]string, 3, len(request)+3)
-	req = append(req, request...)
-	req[2] = service
-	req[1] = MdpcClient
-	req[0] = ""
-	if mdcli.verbose {
-		log.Printf("I: send request to '%s' service: %q\n", service, request)
-	}
-	_, err = mdcli.client.SendMessage(req)
-	return
+// PackageProto will marshal the given information into the correct bytes
+// package.
+func (mdcli *Mdcli) PackageProto(
+	commandType mdapi_pb.CommandTypes, msg []string,
+	args Args) (msgProto *mdapi_pb.WrapperCommand, err error) {
+		msgProto = &mdapi_pb.WrapperCommand{
+			Header: &mdapi_pb.Header{
+				Type: commandType,
+				Entity: mdapi_pb.Entities_CLIENT,
+				Origin: "client", // FIXME: Fix client id, name.
+				Address: "client", // FIXME: Fix client address.
+			},
+		}
+
+		switch commandType {
+		case mdapi_pb.CommandTypes_REQUEST:
+			serviceName := args.ServiceName
+			msgProto.Command = &mdapi_pb.WrapperCommand_Request{
+				Request: &mdapi_pb.Request{
+					ServiceName: serviceName,
+					RequestBody: &mdapi_pb.Request_Body{Body: &mdapi_pb.Body{Body: msg},},
+				},
+			}
+		default:
+			log.Fatalf("E-C: uknown commandType %q", commandType)
+		}
+		return
 }
+
+func (mdcli *Mdcli) SendToBroker(
+	msgProto *mdapi_pb.WrapperCommand) (err error) {
+		commandType := msgProto.GetHeader().GetType()
+		msgBytes, err := proto.Marshal(msgProto)
+		if err != nil {
+			panic(err)
+		}
+	
+		if mdcli.verbose {
+			log.Printf("I: send %s to coordinator\n", CommandMap[commandType])
+		}
+		_, err = mdcli.client.SendMessage(msgBytes)
+		return
+}
+
 
 // Recv waits for a reply message and returns that to the caller. Returns the
 // replay message or Nil if there was no reply. Does not attempt to recover from
 // a broker failure, this is not possible without storing all unanswered
 // requests and resending them all.
-func (mdcli *Mdcli) Recv() (msg []string, err error) {
-	msg = []string{}
-
+func (mdcli *Mdcli) RecvFromBroker() (msgProto *mdapi_pb.WrapperCommand) {
 	// Poll socket for a reply with timeout.
 	polled, err := mdcli.poller.Poll(mdcli.timeout)
 	if err != nil {
@@ -118,27 +143,21 @@ func (mdcli *Mdcli) Recv() (msg []string, err error) {
 
 	// If we got a reply, process it.
 	if len(polled) > 0 {
-		msg, err = mdcli.client.RecvMessage(0)
+		recvBytes, err := mdcli.client.RecvMessageBytes(0)
 		if err != nil {
-			log.Println("W: interrupt received, killing client...")
+			log.Println("E: interrupt received, killing client...")
 			return
+		}
+		msgProto = &mdapi_pb.WrapperCommand{}
+		if err := proto.Unmarshal(recvBytes[0], msgProto); err != nil {
+			log.Fatalln("E: failed to parse wrapped command", err)
 		}
 
 		if mdcli.verbose {
-			log.Printf("I: received reply: %q\n", msg)
+			log.Printf("I: received reply: %q\n", msgProto.GetRequest().GetBody())
 		}
 
-		if len(msg) < 4 {
-			panic("len(msg) < 4")
-		}
-		if msg[0] != "" {
-			panic("msg[0]  != \"\"")
-		}
-		if msg[1] != MdpcClient {
-			panic("msg[1] != MdpcClient")
-		}
-
-		msg = msg[3:]
+		// TODO: Insert the assertions on the proto.
 		return
 	}
 
