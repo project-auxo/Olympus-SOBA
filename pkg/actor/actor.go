@@ -24,7 +24,6 @@ func NewActor(
 		name, broker, endpoint, loadableServices, verbose)
 	actor.coordinator = coordinator
 	actor.coordinator.Bind(endpoint)
-	actor.coordinator.ConnectToBroker()
 	return
 }
 

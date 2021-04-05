@@ -191,15 +191,14 @@ func (mdwrk *Mdwrk) Work() {
 			// panic("E: not a request.")
 		}
 		mdwrk.service = recvProto.GetRequest().GetServiceName()
-		replyAddress := recvProto.GetHeader().GetAddress()
+		// replyAddress := recvProto.GetHeader().GetAddress()
 		// FIXME: Should be using service.LoadService, but running into import cycle
 		// issue.
 		// replyProto := service.LoadService(mdwrk, mdwrk.service, recvProto)
-		
+
 		// FIXME: Delete me.
 		replyProto, _ := mdwrk.PackageProto(mdapi_pb.CommandTypes_REPLY,
-			[]string{"Hello from worker"},
-			Args{ServiceName: mdwrk.service, ReplyAddress: replyAddress})
+			[]string{"Hello from worker"}, Args{ServiceName: mdwrk.service})
 		mdwrk.SendToCoordinator(replyProto)
 	}
 }

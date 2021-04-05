@@ -79,7 +79,7 @@ func NewCoordinator(
 		reconnect: 2500 * time.Millisecond,
 		verbose: verbose,
 	}
-	coordinator.ConnectToBroker()
+	coordinator.ConnectToBroker()		// Sets up brokerSocket.
 	coordinator.workerSocket, err = zmq.NewSocket(zmq.DEALER)
 
 	coordinator.poller.Add(coordinator.brokerSocket, zmq.POLLIN)
