@@ -72,13 +72,18 @@ func NewCoordinator(
 		actorName: actorName,
 		broker: broker,
 		endpoint: endpoint,
+		poller: zmq.NewPoller(),
 		loadableServices: loadableServices,
 		runningWorkers: make(map[string]*mdapi.Mdwrk),
 		heartbeat: 2500 * time.Millisecond,
 		reconnect: 2500 * time.Millisecond,
 		verbose: verbose,
 	}
+	coordinator.ConnectToBroker()
 	coordinator.workerSocket, err = zmq.NewSocket(zmq.DEALER)
+
+	coordinator.poller.Add(coordinator.brokerSocket, zmq.POLLIN)
+	coordinator.poller.Add(coordinator.workerSocket, zmq.POLLIN)
 	return
 }
 
@@ -95,9 +100,38 @@ func (coordinator *Coordinator) Bind(endpoint string) (err error) {
 
 func (coordinator *Coordinator) Run() {
 	for {
-		msgProto := coordinator.RecvFromBroker()
-		if msgProto.GetHeader().GetType() == mdapi_pb.CommandTypes_REQUEST {
-			go coordinator.DispatchRequests(msgProto)
+		polledSockets, err := coordinator.poller.Poll(coordinator.heartbeat)
+		if err != nil {
+			panic(err)
+		}
+
+		// Handle the broker and worker sockets in turn.
+		if len(polledSockets) > 0 {
+			for _, socket := range polledSockets {
+				switch s := socket.Socket; s {
+				case coordinator.brokerSocket:
+					coordinator.RecvFromBroker()
+				case coordinator.workerSocket:
+					coordinator.RecvFromWorkers()
+				}
+			}
+		}else {
+			coordinator.liveness--
+			if coordinator.liveness == 0 {
+				if coordinator.verbose {
+					log.Println("C: disconnected from broker, retrying...")
+				}
+				time.Sleep(coordinator.reconnect)
+				coordinator.ConnectToBroker()
+			}
+		}
+		// Send heartbeat if it's time.
+		if time.Now().After(coordinator.heartbeatAt) {
+			heartbeatProto, _ := coordinator.PackageProto(
+				mdapi_pb.CommandTypes_HEARTBEAT, []string{}, mdapi.Args{})
+			coordinator.SendToEntity(heartbeatProto, mdapi_pb.Entities_BROKER,
+				mdapi.Args{})
+			coordinator.heartbeatAt = time.Now().Add(coordinator.heartbeat)
 		}
 	}
 }
@@ -240,85 +274,57 @@ func (coordinator *Coordinator) ConnectToBroker() (err error) {
 }
 
 // RecvFromBroker waits for the next request.
-func (coordinator *Coordinator) RecvFromBroker() (
-	msgProto *mdapi_pb.WrapperCommand) {
-	for {
-		var polled []zmq.Polled
-		polled, err := coordinator.poller.Poll(coordinator.heartbeat)
-		if err != nil {
-			break
-		}
-
-		if len(polled) > 0 {
-			recvBytes, err := coordinator.brokerSocket.RecvMessageBytes(0)
-			forwarded, _ := strconv.Atoi(string(recvBytes[0]))	// Broker sends a bit saying whether this
-																	// message was forwaded from elsewhere.
-			if err != nil {
-				break 
-			}
-			coordinator.liveness = heartbeatLiveness
-
-			var fromEntity mdapi_pb.Entities
-			// Try unmarshalling as WrapperCommand first, if error, try unmarshaling
-			// as ForwardedCommand. The resultant msgProto will always be
-			// WrapperCommand, i.e. will never receive forwaded-forwaded message.
-			if forwarded == 1 {
-				forwardedProto := &mdapi_pb.ForwardedCommand{}
-				if err = proto.Unmarshal(recvBytes[1], forwardedProto); err != nil {
-					log.Fatalln("E: failed to parse forwarded command:", err)
-				}
-				msgProto = forwardedProto.GetForwardedCommand()
-				fromEntity = forwardedProto.GetHeader().GetEntity()
-			}else {
-				msgProto = &mdapi_pb.WrapperCommand{}
-				if proto.Unmarshal(recvBytes[1], msgProto); err != nil {
-					log.Fatalln("E: failed to parse for wrapped command:", err)
-				}
-				fromEntity = msgProto.GetHeader().GetEntity()
-			}
-
-			if coordinator.verbose {
-				log.Printf("C: received message from broker: %q\n", msgProto)
-			}
-		
-			// Don't try to handle errors, just assert noisily.
-			if fromEntity != mdapi_pb.Entities_BROKER {
-				panic("E: received message is not from a broker.")
-			}
-
-			command := msgProto.GetHeader().GetType()
-			switch command {
-			case mdapi_pb.CommandTypes_REQUEST:
-				// We have a request to process.
-				return
-			case mdapi_pb.CommandTypes_HEARTBEAT:
-				// Do nothing on heartbeats.
-			case mdapi_pb.CommandTypes_DISCONNECT:
-				// FIXME: Not sure if the disconnect should correspond to reconnect.
-				coordinator.ConnectToBroker()
-			default:
-				log.Printf("E: invalid input message %q\n", command)
-			}
-		} else {
-			coordinator.liveness--
-			if coordinator.liveness == 0 {
-				if coordinator.verbose {
-					log.Println("C: disconnected from broker, retrying...")
-				}
-				time.Sleep(coordinator.reconnect)
-				coordinator.ConnectToBroker()
-			}
-		}
-		// Send heartbeat if it's time.
-		if time.Now().After(coordinator.heartbeatAt) {
-			heartbeatProto, _ := coordinator.PackageProto(
-				mdapi_pb.CommandTypes_HEARTBEAT, []string{}, mdapi.Args{})
-			coordinator.SendToEntity(heartbeatProto, mdapi_pb.Entities_BROKER,
-				mdapi.Args{})
-			coordinator.heartbeatAt = time.Now().Add(coordinator.heartbeat)
-		}
+func (coordinator *Coordinator) RecvFromBroker() {
+	var msgProto *mdapi_pb.WrapperCommand
+	recvBytes, err := coordinator.brokerSocket.RecvMessageBytes(0)
+	forwarded, _ := strconv.Atoi(string(recvBytes[0]))	// Broker sends a bit saying whether this
+															// message was forwaded from elsewhere.
+	if err != nil {
+		panic(err) 
 	}
-	return
+	coordinator.liveness = heartbeatLiveness
+
+	var fromEntity mdapi_pb.Entities
+	// Try unmarshalling as WrapperCommand first, if error, try unmarshaling
+	// as ForwardedCommand. The resultant msgProto will always be
+	// WrapperCommand, i.e. will never receive forwaded-forwaded message.
+	if forwarded == 1 {
+		forwardedProto := &mdapi_pb.ForwardedCommand{}
+		if err = proto.Unmarshal(recvBytes[1], forwardedProto); err != nil {
+			log.Fatalln("E: failed to parse forwarded command:", err)
+		}
+		msgProto = forwardedProto.GetForwardedCommand()
+		fromEntity = forwardedProto.GetHeader().GetEntity()
+	}else {
+		msgProto = &mdapi_pb.WrapperCommand{}
+		if proto.Unmarshal(recvBytes[1], msgProto); err != nil {
+			log.Fatalln("E: failed to parse for wrapped command:", err)
+		}
+		fromEntity = msgProto.GetHeader().GetEntity()
+	}
+
+	if coordinator.verbose {
+		log.Printf("C: received message from broker: %q\n", msgProto)
+	}
+
+	// Don't try to handle errors, just assert noisily.
+	if fromEntity != mdapi_pb.Entities_BROKER {
+		panic("E: received message is not from a broker.")
+	}
+
+	command := msgProto.GetHeader().GetType()
+	switch command {
+	case mdapi_pb.CommandTypes_REQUEST:
+		// We have a request to process.
+		coordinator.DispatchRequests(msgProto)
+	case mdapi_pb.CommandTypes_HEARTBEAT:
+		// Do nothing on heartbeats.
+	case mdapi_pb.CommandTypes_DISCONNECT:
+		// FIXME: Not sure if the disconnect should correspond to reconnect.
+		coordinator.ConnectToBroker()
+	default:
+		log.Printf("E: invalid input message %q\n", command)
+	}
 }
 
 
@@ -336,19 +342,6 @@ func (coordinator *Coordinator) DispatchRequests(
 	// Forward the request to the worker.
 	coordinator.SendToEntity(requestProto, mdapi_pb.Entities_WORKER, mdapi.Args{
 		ServiceName: serviceName, WorkerIdentity: id, Forward: true,})
-
-	// FIXME: This should be polled -- and everything should be moved into the
-	// spawn worker go routine.
-	replyProto := coordinator.RecvFromWorkers()
-	if replyProto.GetHeader().GetType() != mdapi_pb.CommandTypes_REPLY {
-		// Skip.
-		return
-	}
-
-	// Work is complete, kill the worker and forward the message back to the
-	// broker unchanged.
-	coordinator.KillWorker(id)
-	coordinator.SendToEntity(replyProto, mdapi_pb.Entities_BROKER, mdapi.Args{})
 }
 
 func (coordinator *Coordinator) SpawnWorker(id uuid.UUID) {
@@ -376,10 +369,9 @@ func (coordinator *Coordinator) KillWorker(id uuid.UUID) {
 	delete(coordinator.runningWorkers, stringId)
 }
 
-func (coordinator *Coordinator) RecvFromWorkers() (
-	msgProto *mdapi_pb.WrapperCommand) {
+func (coordinator *Coordinator) RecvFromWorkers() {
 		recvBytes, _ := coordinator.workerSocket.RecvMessageBytes(0)
-		msgProto = &mdapi_pb.WrapperCommand{}
+		msgProto := &mdapi_pb.WrapperCommand{}
 		if err := proto.Unmarshal(recvBytes[0], msgProto); err != nil {
 			log.Fatalln("E: failed to parse wrapper command:", err)
 		}
@@ -396,11 +388,15 @@ func (coordinator *Coordinator) RecvFromWorkers() (
 		command := msgProto.GetHeader().GetType()
 		switch command {
 		case mdapi_pb.CommandTypes_READY:
-			return
+			// Do nothing on Ready.
 		case mdapi_pb.CommandTypes_REPLY:
-			return
+			// Work is complete, kill the worker and forward the message back to the
+			// broker unchanged.
+			id, _ := uuid.Parse(msgProto.GetHeader().GetOrigin())
+			coordinator.KillWorker(id)
+			coordinator.SendToEntity(
+			msgProto, mdapi_pb.Entities_BROKER, mdapi.Args{Forward: true})
 		default:
 			log.Printf("E: invalid input message %q\n", command)
 		}
-		return nil
 }
