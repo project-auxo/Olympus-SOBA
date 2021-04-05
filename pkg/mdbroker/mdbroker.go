@@ -84,6 +84,7 @@ type Actor struct {
 	broker *Broker 	// Broker instance.
 	identity []byte 	// Identity frame for routing.
 	expiry time.Time	// Expires at unless heartbeat.
+	availableServices []string
 }
 
 
@@ -176,8 +177,9 @@ func (broker *Broker) PackageProto(
 }
 
 // addServices will add the services that an actor notifies the broker via its
-// mdapi.MdpReady and mdapi.MdpHeartbeat
+// Ready and Heartbeat.
 func (broker *Broker) addServices(services []string, actor *Actor) {
+	actor.availableServices = services
 	for _, serviceName := range services {
 		broker.knownServices[serviceName] = struct{}{}
 	}
@@ -185,6 +187,14 @@ func (broker *Broker) addServices(services []string, actor *Actor) {
 	for serviceName := range broker.knownServices {
 		broker.actorServiceMap[serviceName] = append(
 			broker.actorServiceMap[serviceName], actor)
+	}
+}
+
+// removeServices will remove the given services from the known services of
+// the broker.
+func (broker *Broker) removeServices(services []string) {
+	for _, serviceName := range services {
+		delete(broker.knownServices, serviceName)
 	}
 }
 
@@ -377,6 +387,7 @@ func (broker *Broker) DeleteActor(actor *Actor, disconnect bool) {
 	for serviceName, actors := range broker.actorServiceMap {
 		broker.actorServiceMap[serviceName] = delActor(actors, actor)
 	}
+	broker.removeServices(actor.availableServices)
 	delete(broker.actors, string(actor.identity))
 }
 
