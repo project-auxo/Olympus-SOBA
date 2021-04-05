@@ -8,6 +8,7 @@ import (
 	zmq "github.com/pebbe/zmq4"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/Project-Auxo/Olympus/pkg/util"
 	"github.com/Project-Auxo/Olympus/pkg/mdapi"
 	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 )
@@ -176,6 +177,22 @@ func (broker *Broker) PackageProto(
 		return
 }
 
+// ForwardProto will forward a mdapi_pb.WrapperCommand while maintaining the
+// broker's header.
+func (broker *Broker) ForwardProto(msgProto *mdapi_pb.WrapperCommand) (
+	forwadedProto *mdapi_pb.ForwardedCommand) {
+		forwadedProto = &mdapi_pb.ForwardedCommand{
+			Header: &mdapi_pb.Header{
+				Type: mdapi_pb.CommandTypes_FORWARDED,
+				Entity: mdapi_pb.Entities_BROKER,
+				Origin: broker.endpoint,
+				Address: broker.endpoint,
+			},
+		}
+		forwadedProto.ForwardedCommand = msgProto
+		return
+}
+
 // addServices will add the services that an actor notifies the broker via its
 // Ready and Heartbeat.
 func (broker *Broker) addServices(services []string, actor *Actor) {
@@ -246,7 +263,7 @@ func (broker *Broker) Handle() {
 			 for _, actor := range broker.actors {
 					heartbeatProto, _ := broker.PackageProto(
 						mdapi_pb.CommandTypes_HEARTBEAT, []string{}, mdapi.Args{}) 
-				 actor.Send(heartbeatProto)
+				 actor.Send(heartbeatProto, false)
 			 }
 			 broker.heartbeatAt = time.Now().Add(HeartbeatInterval)
 		 }
@@ -352,7 +369,8 @@ func (service *Service) Dispatch(msgProto *mdapi_pb.WrapperCommand) {
 		
 		currMsgProto := service.requests[0]
 		service.requests = service.requests[1:]
-		actor.Send(currMsgProto)
+		// Forward the request to the actor.
+		actor.Send(currMsgProto, true)
 	}
 }
 
@@ -382,7 +400,7 @@ func (broker *Broker) DeleteActor(actor *Actor, disconnect bool) {
 	if disconnect {
 		disconnectProto, _ := broker.PackageProto(
 			mdapi_pb.CommandTypes_DISCONNECT, []string{}, mdapi.Args{})
-		actor.Send(disconnectProto)
+		actor.Send(disconnectProto, false)
 	}
 	for serviceName, actors := range broker.actorServiceMap {
 		broker.actorServiceMap[serviceName] = delActor(actors, actor)
@@ -393,11 +411,18 @@ func (broker *Broker) DeleteActor(actor *Actor, disconnect bool) {
 
 // Send formats and sends a command to a actor. The caller may also provide a
 // command option, and message payload.
-func (actor *Actor) Send(msgProto *mdapi_pb.WrapperCommand) (err error) {
-	msgBytes, err := proto.Marshal(msgProto)
-	if err != nil {
-		panic(err)
-	}
-	_, err = actor.broker.socket.SendMessage(actor.identity, msgBytes)
-	return
+func (actor *Actor) Send(
+	msgProto *mdapi_pb.WrapperCommand, forward bool) (err error) {
+		var msgBytes []byte
+		if forward {
+			msgBytes, err = proto.Marshal(actor.broker.ForwardProto(msgProto))
+		}else {
+			msgBytes, err = proto.Marshal(msgProto)
+		}
+		if err != nil {
+			panic(err)
+		}
+		_, err = actor.broker.socket.SendMessage(
+			actor.identity, util.Btou(forward), msgBytes)
+		return
 }

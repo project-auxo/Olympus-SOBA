@@ -37,3 +37,10 @@ func PopMsg(msgs [][]string) (msg []string, msgs2 [][]string) {
 	msgs2 = msgs[1:]
 	return
 }
+
+func Btou(b bool) uint8 {
+	if b {
+		return 1
+	}
+	return 0
+}

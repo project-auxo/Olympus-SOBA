@@ -3,6 +3,7 @@ package actor
 import (
 	"log"
 	"time"
+	"strconv"
 
 	"github.com/google/uuid"
 	zmq "github.com/pebbe/zmq4"
@@ -221,20 +222,37 @@ func (coordinator *Coordinator) RecvFromBroker() (
 
 		if len(polled) > 0 {
 			recvBytes, err := coordinator.brokerSocket.RecvMessageBytes(0)
+			forwarded, _ := strconv.Atoi(string(recvBytes[0]))	// Broker sends a bit saying whether this
+																	// message was forwaded from elsewhere.
 			if err != nil {
 				break 
 			}
 			coordinator.liveness = heartbeatLiveness
-			msgProto = &mdapi_pb.WrapperCommand{}
-			if err = proto.Unmarshal(recvBytes[0], msgProto); err != nil {
-				log.Fatalln("E: failed to parse wrapper command:", err)
+
+			var fromEntity mdapi_pb.Entities
+			// Try unmarshalling as WrapperCommand first, if error, try unmarshaling
+			// as ForwardedCommand.
+			if forwarded == 1 {
+				forwardedProto := &mdapi_pb.ForwardedCommand{}
+				if err = proto.Unmarshal(recvBytes[1], forwardedProto); err != nil {
+					log.Fatalln("E: failed to parse forwarded command:", err)
+				}
+				msgProto = forwardedProto.GetForwardedCommand()
+				fromEntity = forwardedProto.GetHeader().GetEntity()
+			}else {
+				msgProto = &mdapi_pb.WrapperCommand{}
+				if proto.Unmarshal(recvBytes[1], msgProto); err != nil {
+					log.Fatalln("E: failed to parse for wrapped command:", err)
+				}
+				fromEntity = msgProto.GetHeader().GetEntity()
 			}
+
 			if coordinator.verbose {
 				log.Printf("C: received message from broker: %q\n", msgProto)
 			}
 		
 			// Don't try to handle errors, just assert noisily.
-			if msgProto.GetHeader().GetEntity() != mdapi_pb.Entities_BROKER {
+			if fromEntity != mdapi_pb.Entities_BROKER {
 				panic("E: received message is not from a broker.")
 			}
 

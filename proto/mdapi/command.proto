@@ -13,6 +13,7 @@ enum CommandTypes {
   REPLY = 2;
   HEARTBEAT = 3;
   DISCONNECT = 4;
+  FORWARDED = 5;
 }
 
 enum Entities {
@@ -75,4 +76,9 @@ message WrapperCommand {
     Heartbeat heartbeat = 5;
     Disconnect disconnect = 6;
   }
+}
+
+message ForwardedCommand {
+  Header header = 1;
+  WrapperCommand forwarded_command = 2;
 }
