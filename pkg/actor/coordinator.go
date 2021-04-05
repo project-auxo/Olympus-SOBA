@@ -2,14 +2,15 @@ package actor
 
 import (
 	"log"
-	"time"
 	"strconv"
+	"time"
 
 	"github.com/google/uuid"
 	zmq "github.com/pebbe/zmq4"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/Project-Auxo/Olympus/pkg/mdapi"
+	"github.com/Project-Auxo/Olympus/pkg/util"
 	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 )
 
@@ -94,7 +95,10 @@ func (coordinator *Coordinator) Bind(endpoint string) (err error) {
 
 func (coordinator *Coordinator) Run() {
 	for {
-		coordinator.DispatchRequests()
+		msgProto := coordinator.RecvFromBroker()
+		if msgProto.GetHeader().GetType() == mdapi_pb.CommandTypes_REQUEST {
+			go coordinator.DispatchRequests(msgProto)
+		}
 	}
 }
 
@@ -160,24 +164,49 @@ func (coordinator *Coordinator) PackageProto(
 		return
 }
 
+// ForwardProto will forward a mdapi_pb.WrapperCommand while maintaining the
+// broker's header.
+func (coordinator *Coordinator) ForwardProto(
+	msgProto *mdapi_pb.WrapperCommand) (forwadedProto *mdapi_pb.ForwardedCommand) {
+		forwadedProto = &mdapi_pb.ForwardedCommand{
+			Header: &mdapi_pb.Header{
+				Type: mdapi_pb.CommandTypes_FORWARDED,
+				Entity: mdapi_pb.Entities_ACTOR,
+				Origin: coordinator.actorName,
+				Address: coordinator.actorName,
+			},
+		}
+		forwadedProto.ForwardedCommand = msgProto
+		return
+}
+
 // SendToEntity sends a message to the specified entity.
 func (coordinator *Coordinator) SendToEntity(msgProto *mdapi_pb.WrapperCommand,
 	entity mdapi_pb.Entities, args mdapi.Args) (err error) {
 		commandType := msgProto.GetHeader().GetType()
-		msgBytes, err := proto.Marshal(msgProto)
+		var msgBytes []byte
+		if args.Forward {
+			msgBytes, err = proto.Marshal(coordinator.ForwardProto(msgProto))
+		}else {
+			msgBytes, err = proto.Marshal(msgProto)
+		}
 		if err != nil {
 			panic(err)
 		}
 		if coordinator.verbose {
-			log.Printf("C: sending %s to %s\n", mdapi.
+			forwardMap := map[bool]string{false: "sending", true: "forwarding"}
+			log.Printf("C: %s %s to %s\n", forwardMap[args.Forward], mdapi.
 			CommandMap[commandType], mdapi.EntitiesMap[entity])
 		}
 		switch entity {
 		case mdapi_pb.Entities_BROKER:
 			_, err = coordinator.brokerSocket.SendMessage(msgBytes)
 		case mdapi_pb.Entities_WORKER:
+			// Messages to workers can be forwaded, so include as option in
+			// SendMessage.
 			byteId, _ := args.WorkerIdentity.MarshalBinary()
-			_, err = coordinator.workerSocket.SendMessage(byteId, msgBytes)
+			_, err = coordinator.workerSocket.SendMessage(
+				byteId, util.Btou(args.Forward), msgBytes)
 		default:
 			log.Fatal("E: unrecognized entity")
 		}
@@ -231,7 +260,8 @@ func (coordinator *Coordinator) RecvFromBroker() (
 
 			var fromEntity mdapi_pb.Entities
 			// Try unmarshalling as WrapperCommand first, if error, try unmarshaling
-			// as ForwardedCommand.
+			// as ForwardedCommand. The resultant msgProto will always be
+			// WrapperCommand, i.e. will never receive forwaded-forwaded message.
 			if forwarded == 1 {
 				forwardedProto := &mdapi_pb.ForwardedCommand{}
 				if err = proto.Unmarshal(recvBytes[1], forwardedProto); err != nil {
@@ -294,26 +324,25 @@ func (coordinator *Coordinator) RecvFromBroker() (
 
 // ----------------- Worker Interface ------------------------
 
-func (coordinator *Coordinator) DispatchRequests() {
-	requestProto := coordinator.RecvFromBroker()
-	if requestProto.GetHeader().GetType() != mdapi_pb.CommandTypes_REQUEST {
-		return
-		// panic("E: not a request.")
-	}
+func (coordinator *Coordinator) DispatchRequests(
+	requestProto *mdapi_pb.WrapperCommand) {
 	serviceName := requestProto.GetRequest().GetServiceName()
-
-	id := make(chan uuid.UUID)
+	id := uuid.New()		/* TODO: Make this a channel so id can be made in the
+											 spawn worker function. */ 
 	go coordinator.SpawnWorker(id)
 
 	// Forward the requestProto to the worker that was just spawned.
 
+	// Forward the request to the worker.
 	coordinator.SendToEntity(requestProto, mdapi_pb.Entities_WORKER, mdapi.Args{
-		ServiceName: serviceName, WorkerIdentity: <-id,})
+		ServiceName: serviceName, WorkerIdentity: id, Forward: true,})
 
-	// FIXME: This shoudl be polled.
+	// FIXME: This should be polled -- and everything should be moved into the
+	// spawn worker go routine.
 	replyProto := coordinator.RecvFromWorkers()
-	if replyProto == nil {
-		panic("E: reply from worker is nil")
+	if replyProto.GetHeader().GetType() != mdapi_pb.CommandTypes_REPLY {
+		// Skip.
+		return
 	}
 
 	// Work is complete, kill the worker and forward the message back to the
@@ -322,21 +351,19 @@ func (coordinator *Coordinator) DispatchRequests() {
 	coordinator.SendToEntity(replyProto, mdapi_pb.Entities_BROKER, mdapi.Args{})
 }
 
-func (coordinator *Coordinator) SpawnWorker(id chan uuid.UUID) {
-		id <- uuid.New()
-		stringId := (<-id).String()
+func (coordinator *Coordinator) SpawnWorker(id uuid.UUID) {
+		stringId := id.String()
 		worker, _ := mdapi.NewMdwrk(
-			<-id, workersEndpoint, coordinator.verbose, stringId)
+			id, workersEndpoint, coordinator.verbose, stringId)
 
 		// Coordinator waits for worker to register itself.
-		coordinator.workerSocket.RecvMessageBytes(0)
+		// coordinator.workerSocket.RecvMessageBytes(0)
 		coordinator.runningWorkers[stringId] = worker
 		worker.Work()
 }
 
-func (coordinator *Coordinator) KillWorker(id chan uuid.UUID) {
-	id <- uuid.New()
-	stringId := (<-id).String()
+func (coordinator *Coordinator) KillWorker(id uuid.UUID) {
+	stringId := id.String()
 	_, ok := coordinator.runningWorkers[stringId]
 	if !ok {
 		log.Printf("E: worker %s does not exist", stringId)
@@ -345,7 +372,7 @@ func (coordinator *Coordinator) KillWorker(id chan uuid.UUID) {
 	disconnectProto, _ := coordinator.PackageProto(
 		mdapi_pb.CommandTypes_DISCONNECT, []string{}, mdapi.Args{})
 	coordinator.SendToEntity(
-		disconnectProto, mdapi_pb.Entities_WORKER, mdapi.Args{WorkerIdentity: <-id})
+		disconnectProto, mdapi_pb.Entities_WORKER, mdapi.Args{WorkerIdentity: id})
 	delete(coordinator.runningWorkers, stringId)
 }
 
@@ -362,8 +389,14 @@ func (coordinator *Coordinator) RecvFromWorkers() (
 			panic("E: received message is not from a worker.")
 		}
 
+		if coordinator.verbose {
+			log.Printf("C: received message from worker: %q\n", msgProto)
+		}
+
 		command := msgProto.GetHeader().GetType()
 		switch command {
+		case mdapi_pb.CommandTypes_READY:
+			return
 		case mdapi_pb.CommandTypes_REPLY:
 			return
 		default:

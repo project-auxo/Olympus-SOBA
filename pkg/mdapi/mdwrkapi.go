@@ -3,6 +3,7 @@ package mdapi
 import (
 	"log"
 	"runtime"
+	"strconv"
 
 	"github.com/google/uuid"
 	zmq "github.com/pebbe/zmq4"
@@ -19,6 +20,7 @@ type Args struct {
 	WorkerIdentity uuid.UUID	// To send to specific worker.
 	ServiceName string
 	ReplyAddress string		// Address of who to address the message to.
+	Forward bool // If the message being sent was forwarded.
 }
 
 // Mdwrk is the Majordomo Protocol Worker API.
@@ -35,19 +37,19 @@ type Mdwrk struct {
 func NewMdwrk(
 	id uuid.UUID,
 	coordinator string, verbose bool, identity string) (mdwrk *Mdwrk, err error) {
-	mdwrk = &Mdwrk{
-		id: id,
-		coordinator: coordinator,
-		verbose: verbose,
-	}
-	err = mdwrk.ConnectToCoordinator(identity)
+		mdwrk = &Mdwrk{
+			id: id,
+			coordinator: coordinator,
+			verbose: verbose,
+		}
+		err = mdwrk.ConnectToCoordinator(identity)
 
-	readyProto, _ := mdwrk.PackageProto(
-		mdapi_pb.CommandTypes_READY, []string{}, Args{})
-	mdwrk.SendToCoordinator(readyProto)
+		readyProto, _ := mdwrk.PackageProto(
+			mdapi_pb.CommandTypes_READY, []string{}, Args{})
+		mdwrk.SendToCoordinator(readyProto)
 
-	runtime.SetFinalizer(mdwrk, (*Mdwrk).Close)
-	return
+		runtime.SetFinalizer(mdwrk, (*Mdwrk).Close)
+		return
 }
 
 func (mdwrk *Mdwrk) GetID() uuid.UUID {
@@ -71,7 +73,9 @@ func (mdwrk *Mdwrk) ConnectToCoordinator(identity string) (err error) {
 	}
 	err = mdwrk.coordinatorSocket.Connect(mdwrk.coordinator)
 	if mdwrk.verbose {
-		log.Printf("worker: connecting to coordinator at %s...\n", mdwrk.coordinator)
+		log.Printf(
+			"W-%s: connecting to coordinator at %s\n",
+			mdwrk.id.String(), mdwrk.coordinator)
 	}
 	return
 }
@@ -131,15 +135,35 @@ func (mdwrk *Mdwrk) SendToCoordinator(
 
 
 func (mdwrk *Mdwrk) RecvFromCoordinator() (msgProto *mdapi_pb.WrapperCommand) {
+	// recvBytes of form: [actorIdentity, forwaded bit, msgPayload]
 	recvBytes, _ := mdwrk.coordinatorSocket.RecvMessageBytes(0)
-	msgProto = &mdapi_pb.WrapperCommand{}
-	if err := proto.Unmarshal(recvBytes[0], msgProto); err != nil {
-		log.Fatalln("E-W: failed to parse wrapper command:", err)
+	forwarded, _ := strconv.Atoi(string(recvBytes[1]))
+	bytesPayload := recvBytes[2]
+
+	var fromEntity mdapi_pb.Entities
+	if forwarded == 1 {
+		forwardedProto := &mdapi_pb.ForwardedCommand{}
+		if err := proto.Unmarshal(bytesPayload, forwardedProto); err != nil {
+			log.Fatalln("E-W: failed to parse forwaded command:", err)
+		}
+		msgProto = forwardedProto.GetForwardedCommand()
+		fromEntity = forwardedProto.GetHeader().GetEntity()
+	}else {
+		msgProto = &mdapi_pb.WrapperCommand{}
+		if err := proto.Unmarshal(bytesPayload, msgProto); err != nil {
+			log.Fatalln("E-W: failed to parse wrapper command:", err)
+		}	
+		fromEntity = msgProto.GetHeader().GetEntity()
 	}
 
 	// Don't try to handle errors, just assert noisily.
-	if msgProto.GetHeader().GetEntity() != mdapi_pb.Entities_ACTOR {
-		panic("E: received message is not from a coordinator.")
+	if fromEntity != mdapi_pb.Entities_ACTOR {
+		log.Panicf("E: received message is not from a coordinator: %q", fromEntity)
+	}
+
+	if mdwrk.verbose {
+		log.Printf("W-%s: received message from coordinator: %q\n",
+		mdwrk.id.String(), msgProto)
 	}
 
 	command := msgProto.GetHeader().GetType()
@@ -171,6 +195,7 @@ func (mdwrk *Mdwrk) Work() {
 		// FIXME: Should be using service.LoadService, but running into import cycle
 		// issue.
 		// replyProto := service.LoadService(mdwrk, mdwrk.service, recvProto)
+		
 		// FIXME: Delete me.
 		replyProto, _ := mdwrk.PackageProto(mdapi_pb.CommandTypes_REPLY,
 			[]string{"Hello from worker"},
