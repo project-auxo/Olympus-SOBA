@@ -63,7 +63,8 @@ type Broker struct {
 	
 	actorServiceMap map[string][]*Actor		// Actors that can run a service keyed
 																				// by serviceName
-	actors map[string]*Actor	// Hash of known actors keyed by idString.
+	actors map[string]*Actor	// Hash of known actors keyed by their identity on
+														// socket.
 
 	heartbeatAt 	time.Time	// When to send the heartbeat.
 }
@@ -81,10 +82,7 @@ type Service struct {
 // Actor class defines a single actor, idle or active.
 type Actor struct {
 	broker *Broker 	// Broker instance.
-	idString string 	// Identity of actor as a string.
 	identity []byte 	// Identity frame for routing.
-	runningServices []*Service		// Services that actor is participating in.
-
 	expiry time.Time	// Expires at unless heartbeat.
 }
 
@@ -211,7 +209,7 @@ func (broker *Broker) Handle() {
 			if err != nil {
 				break	// Interrupted.
 			}
-			sender := recvBytes[0]
+			receivedFrom := recvBytes[0]
 			msgProto := &mdapi_pb.WrapperCommand{}
 			if err = proto.Unmarshal(recvBytes[1], msgProto); err != nil {
 				log.Fatalln("E: failed to parse wrapper command:", err)
@@ -226,7 +224,7 @@ func (broker *Broker) Handle() {
 			case mdapi_pb.Entities_CLIENT:
 			 broker.ClientMsg(msgProto)
 			case mdapi_pb.Entities_ACTOR:
-			 broker.ActorMsg(sender, msgProto)
+			 broker.ActorMsg(receivedFrom, msgProto)
 			default:
 			 log.Printf("E: invalid message: %q\n", msgProto)
 			}
@@ -302,7 +300,7 @@ func (broker *Broker) Purge() {
 			continue 	// Actor is alive, we're done here
 		}
 		if broker.verbose {
-			log.Println("I: deleting expired actor", actor.idString)
+			log.Printf("I: deleting expired actor %q", actor.identity)
 		}
 		broker.DeleteActor(actor, false)
 	}
@@ -353,19 +351,17 @@ func (service *Service) Dispatch(msgProto *mdapi_pb.WrapperCommand) {
 
 // ActorRequire is a lazy constructor that locates an actor by identity, or
 // returns an error if there is no actor already with that identity.
-func (broker *Broker) ActorRequire(sender []byte) (actor *Actor) {
-	idString := string(sender)
-	actor, ok := broker.actors[idString]
+func (broker *Broker) ActorRequire(receivedFrom []byte) (actor *Actor) {
+	actor, ok := broker.actors[string(receivedFrom)]
 	if !ok {
 		actor = &Actor{
 			broker: broker,
-			idString: idString,
-			identity: sender,
+			identity: receivedFrom,
 			expiry: time.Now().Add(HeartbeatExpiry),
 		}
-		broker.actors[idString] = actor
+		broker.actors[string(receivedFrom)] = actor
 		if broker.verbose {
-			log.Printf("I: registering new actor: %s\n", idString)
+			log.Printf("I: registering new actor: %q\n", receivedFrom)
 		}
 	}
 	return
@@ -381,7 +377,7 @@ func (broker *Broker) DeleteActor(actor *Actor, disconnect bool) {
 	for serviceName, actors := range broker.actorServiceMap {
 		broker.actorServiceMap[serviceName] = delActor(actors, actor)
 	}
-	delete(broker.actors, actor.idString)
+	delete(broker.actors, string(actor.identity))
 }
 
 // Send formats and sends a command to a actor. The caller may also provide a

@@ -224,13 +224,13 @@ func (coordinator *Coordinator) RecvFromBroker() (
 			if err != nil {
 				break 
 			}
-			if coordinator.verbose {
-				log.Printf("C: received message from broker: %q\n", recvBytes)
-			}
 			coordinator.liveness = heartbeatLiveness
 			msgProto = &mdapi_pb.WrapperCommand{}
 			if err = proto.Unmarshal(recvBytes[0], msgProto); err != nil {
 				log.Fatalln("E: failed to parse wrapper command:", err)
+			}
+			if coordinator.verbose {
+				log.Printf("C: received message from broker: %q\n", msgProto)
 			}
 		
 			// Don't try to handle errors, just assert noisily.
