@@ -17,7 +17,7 @@ var	errPermanent = errors.New("permanent error, abandoning request")
 
 // Mdcli is the Majordomo Protocol Client API.
 type Mdcli struct {
-	ID int
+	identity string
 	broker string
 	client *zmq.Socket		// Socket to the broker.
 	verbose bool		// Print activity to stdout.
@@ -28,7 +28,7 @@ type Mdcli struct {
 
 // ConnectToBroker to connect or reconnect to the broker. Asynchronous hence
 // the DEALER socket over the REQ socket.
-func (mdcli *Mdcli) ConnectToBroker() (err error) {
+func (mdcli *Mdcli) ConnectToBroker(identity string) (err error) {
 	if mdcli.client != nil {
 		mdcli.client.Close()
 		mdcli.client = nil
@@ -39,6 +39,10 @@ func (mdcli *Mdcli) ConnectToBroker() (err error) {
 			log.Println("E: ConnectToBroker() creating socket failed")
 		}
 		return
+	}
+
+	if identity != "" {
+		mdcli.client.SetIdentity(identity)
 	}
 
 	mdcli.poller = zmq.NewPoller()
@@ -57,14 +61,14 @@ func (mdcli *Mdcli) ConnectToBroker() (err error) {
 
 
 // NewMdcli is a constructor.
-func NewMdcli(id int, broker string, verbose bool) (mdcli *Mdcli, err error) {
+func NewMdcli(identity string, broker string, verbose bool) (mdcli *Mdcli, err error) {
 	mdcli = &Mdcli{
-		ID: id,
+		identity: identity,
 		broker: broker,
 		verbose: verbose,
 		timeout: time.Duration(2500*time.Millisecond),
 	}
-	err = mdcli.ConnectToBroker()
+	err = mdcli.ConnectToBroker(identity)
 	runtime.SetFinalizer(mdcli, (*Mdcli).Close)
 	return
 }
@@ -94,8 +98,8 @@ func (mdcli *Mdcli) PackageProto(
 			Header: &mdapi_pb.Header{
 				Type: commandType,
 				Entity: mdapi_pb.Entities_CLIENT,
-				Origin: "client", // FIXME: Fix client id, name.
-				Address: "client", // FIXME: Fix client address.
+				Origin: mdcli.identity,
+				Address: mdcli.identity, 
 			},
 		}
 
@@ -125,7 +129,9 @@ func (mdcli *Mdcli) SendToBroker(
 		if mdcli.verbose {
 			log.Printf("I: send %s to coordinator\n", CommandMap[commandType])
 		}
-		_, err = mdcli.client.SendMessage(msgBytes)
+		// First part is the "forwarded" bit, set to 0 because clients can't forward
+		// messages.
+		_, err = mdcli.client.SendMessage(0, msgBytes)
 		return
 }
 

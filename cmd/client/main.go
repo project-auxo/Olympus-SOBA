@@ -14,7 +14,7 @@ import (
 
 
 func main() {
-	idPtr := flag.Int("name", 1, "Client's ID.")
+	idPtr := flag.String("name", "client-1", "Client's ID.")
 	verbosePtr := flag.Bool("v", false, "Print to stdout.")
 	configPathPtr := flag.String("config", "", "Absolute path to config file.")
 	serviceNamePtr := flag.String("s", "", "Service name to request")

@@ -75,8 +75,8 @@ func NewCoordinator(
 		poller: zmq.NewPoller(),
 		loadableServices: loadableServices,
 		runningWorkers: make(map[string]*mdapi.Mdwrk),
-		heartbeat: 2500 * time.Millisecond,
-		reconnect: 2500 * time.Millisecond,
+		heartbeat: 1000 * time.Millisecond,
+		reconnect: 1000 * time.Millisecond,
 		verbose: verbose,
 	}
 	coordinator.ConnectToBroker()		// Sets up brokerSocket.
@@ -234,7 +234,10 @@ func (coordinator *Coordinator) SendToEntity(msgProto *mdapi_pb.WrapperCommand,
 		}
 		switch entity {
 		case mdapi_pb.Entities_BROKER:
-			_, err = coordinator.brokerSocket.SendMessage(msgBytes)
+			// Messages to workers can be forwaded, so include as option in
+			// SendMessage.
+			_, err = coordinator.brokerSocket.SendMessage(
+				util.Btou(args.Forward), msgBytes)
 		case mdapi_pb.Entities_WORKER:
 			// Messages to workers can be forwaded, so include as option in
 			// SendMessage.
@@ -277,8 +280,7 @@ func (coordinator *Coordinator) ConnectToBroker() (err error) {
 func (coordinator *Coordinator) RecvFromBroker() {
 	var msgProto *mdapi_pb.WrapperCommand
 	recvBytes, err := coordinator.brokerSocket.RecvMessageBytes(0)
-	forwarded, _ := strconv.Atoi(string(recvBytes[0]))	// Broker sends a bit saying whether this
-															// message was forwaded from elsewhere.
+	forwarded, _ := strconv.Atoi(string(recvBytes[0]))
 	if err != nil {
 		panic(err) 
 	}

@@ -197,8 +197,10 @@ func (mdwrk *Mdwrk) Work() {
 		// replyProto := service.LoadService(mdwrk, mdwrk.service, recvProto)
 
 		// FIXME: Delete me.
+		replyAddress := recvProto.GetHeader().GetAddress()
 		replyProto, _ := mdwrk.PackageProto(mdapi_pb.CommandTypes_REPLY,
-			[]string{"Hello from worker"}, Args{ServiceName: mdwrk.service})
+			[]string{"Hello from worker"},
+			Args{ServiceName: mdwrk.service, ReplyAddress: replyAddress})
 		mdwrk.SendToCoordinator(replyProto)
 	}
 }

@@ -3,6 +3,7 @@ package mdbroker
 import (
 	"log"
 	"runtime"
+	"strconv"
 	"time"
 
 	zmq "github.com/pebbe/zmq4"
@@ -30,7 +31,7 @@ import (
 
 const (
 	HeartbeatLiveness = 3
-	HeartbeatInterval = 2000 * time.Millisecond
+	HeartbeatInterval = 1000 * time.Millisecond
 	HeartbeatExpiry = HeartbeatInterval * HeartbeatLiveness
 )
 
@@ -236,18 +237,38 @@ func (broker *Broker) Handle() {
 			if err != nil {
 				break	// Interrupted.
 			}
-			receivedFrom := recvBytes[0]
-			msgProto := &mdapi_pb.WrapperCommand{}
-			if err = proto.Unmarshal(recvBytes[1], msgProto); err != nil {
-				log.Fatalln("E: failed to parse wrapper command:", err)
+			if len(recvBytes) < 3 {
+				panic("E: didn't receive enough parts, is there a \"forwarded\" bit?")
 			}
-			
+			receivedFrom := recvBytes[0]
+
+			var fromEntity mdapi_pb.Entities
+			var msgProto *mdapi_pb.WrapperCommand
+			// Try unmarshalling as WrapperCommand first, if error, try unmarshaling
+			// as ForwardedCommand. The resultant msgProto will always be
+			// WrapperCommand, i.e. will never receive forwaded-forwaded message.
+			forwarded, _ := strconv.Atoi(string(recvBytes[1]))
+			msgBytes := recvBytes[2]
+			if forwarded == 1 {
+				forwardedProto := &mdapi_pb.ForwardedCommand{}
+				if err = proto.Unmarshal(msgBytes, forwardedProto); err != nil {
+					log.Fatalln("E: failed to parse forwarded command:", err)
+				}
+				msgProto = forwardedProto.GetForwardedCommand()
+				fromEntity = forwardedProto.GetHeader().GetEntity()
+			}else {
+				msgProto = &mdapi_pb.WrapperCommand{}
+				if err = proto.Unmarshal(msgBytes, msgProto); err != nil {
+					log.Fatalln("E: failed to parse wrapper command:", err)
+				}
+				fromEntity = msgProto.GetHeader().GetEntity()
+			}
+	
 			if broker.verbose {
 				log.Printf("I: received message: %q\n", msgProto)
 			}
 
-			entity := msgProto.GetHeader().GetEntity()
-			switch entity {
+			switch fromEntity {
 			case mdapi_pb.Entities_CLIENT:
 			 broker.ClientMsg(msgProto)
 			case mdapi_pb.Entities_ACTOR:
@@ -409,8 +430,7 @@ func (broker *Broker) DeleteActor(actor *Actor, disconnect bool) {
 	delete(broker.actors, string(actor.identity))
 }
 
-// Send formats and sends a command to a actor. The caller may also provide a
-// command option, and message payload.
+// Send formats and sends a command to a actor.
 func (actor *Actor) Send(
 	msgProto *mdapi_pb.WrapperCommand, forward bool) (err error) {
 		var msgBytes []byte
