@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"flag"
 
-	"github.com/Project-Auxo/Olympus/pkg/mdbroker"
+	brker "github.com/Project-Auxo/Olympus/pkg/broker"
 	"github.com/Project-Auxo/Olympus/config"
 )
 
@@ -24,7 +24,7 @@ func main() {
 	endpoint := fmt.Sprintf(
 		"tcp://%s:%d", configuration.Broker.Hostname, configuration.Broker.Port)
 
-	broker, _ := mdbroker.NewBroker(verbose)
+	broker, _ := brker.NewBroker(verbose)
 	broker.Bind(endpoint)
 	broker.Handle()
 }

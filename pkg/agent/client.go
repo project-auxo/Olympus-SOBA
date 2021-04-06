@@ -1,4 +1,4 @@
-package mdapi
+package agent
 
 import (
 	"errors"
@@ -9,17 +9,18 @@ import (
 	zmq "github.com/pebbe/zmq4"
 	"google.golang.org/protobuf/proto"
 
+	mdapi "github.com/Project-Auxo/Olympus/pkg/mdapi"
 	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 )
 
 var	errPermanent = errors.New("permanent error, abandoning request")
-// TODO: Change client to clientSocket
+// TODO: Change clientSocket to clientSocket
 
-// Mdcli is the Majordomo Protocol Client API.
-type Mdcli struct {
+// Client is the Majordomo Protocol Client API.
+type Client struct {
 	identity string
 	broker string
-	client *zmq.Socket		// Socket to the broker.
+	clientSocket *zmq.Socket		// Socket to the broker.
 	verbose bool		// Print activity to stdout.
 	timeout time.Duration 	// Request timeout.
 	poller *zmq.Poller
@@ -28,78 +29,78 @@ type Mdcli struct {
 
 // ConnectToBroker to connect or reconnect to the broker. Asynchronous hence
 // the DEALER socket over the REQ socket.
-func (mdcli *Mdcli) ConnectToBroker(identity string) (err error) {
-	if mdcli.client != nil {
-		mdcli.client.Close()
-		mdcli.client = nil
+func (client *Client) ConnectToBroker(identity string) (err error) {
+	if client.clientSocket != nil {
+		client.clientSocket.Close()
+		client.clientSocket = nil
 	}
-	mdcli.client, err = zmq.NewSocket(zmq.DEALER)
+	client.clientSocket, err = zmq.NewSocket(zmq.DEALER)
 	if err != nil {
-		if mdcli.verbose {
+		if client.verbose {
 			log.Println("E: ConnectToBroker() creating socket failed")
 		}
 		return
 	}
 
 	if identity != "" {
-		mdcli.client.SetIdentity(identity)
+		client.clientSocket.SetIdentity(identity)
 	}
 
-	mdcli.poller = zmq.NewPoller()
-	mdcli.poller.Add(mdcli.client, zmq.POLLIN)
+	client.poller = zmq.NewPoller()
+	client.poller.Add(client.clientSocket, zmq.POLLIN)
 
-	if mdcli.verbose {
-		log.Printf("I: connecting to broker at %s...", mdcli.broker)
+	if client.verbose {
+		log.Printf("I: connecting to broker at %s...", client.broker)
 	}
-	err = mdcli.client.Connect(mdcli.broker)
-	if err != nil && mdcli.verbose {
+	err = client.clientSocket.Connect(client.broker)
+	if err != nil && client.verbose {
 		log.Println(
-			"E: ConnectToBroker() failed to connect to broker", mdcli.broker)
+			"E: ConnectToBroker() failed to connect to broker", client.broker)
 	}
 	return
 }
 
 
-// NewMdcli is a constructor.
-func NewMdcli(identity string, broker string, verbose bool) (mdcli *Mdcli, err error) {
-	mdcli = &Mdcli{
+// NewClient is a constructor.
+func NewClient(identity string, broker string, verbose bool) (client *Client, err error) {
+	client = &Client{
 		identity: identity,
 		broker: broker,
 		verbose: verbose,
 		timeout: time.Duration(2500*time.Millisecond),
 	}
-	err = mdcli.ConnectToBroker(identity)
-	runtime.SetFinalizer(mdcli, (*Mdcli).Close)
+	err = client.ConnectToBroker(identity)
+	runtime.SetFinalizer(client, (*Client).Close)
 	return
 }
 
 
-// Close is mdcli's destructor.
-func (mdcli *Mdcli) Close() (err error) {
-	if mdcli.client != nil {
-		err = mdcli.client.Close()
-		mdcli.client = nil
+// Close is client's destructor.
+func (client *Client) Close() (err error) {
+	if client.clientSocket != nil {
+		err = client.clientSocket.Close()
+		client.clientSocket = nil
 	}
 	return
 }
 
 // SetTimeout sets the request timeout.
-func (mdcli *Mdcli) SetTimeout(timeout time.Duration) {
-	mdcli.timeout = timeout
+func (client *Client) SetTimeout(timeout time.Duration) {
+	client.timeout = timeout
 }
 
 
 // PackageProto will marshal the given information into the correct bytes
 // package.
-func (mdcli *Mdcli) PackageProto(
+func (client *Client) PackageProto(
 	commandType mdapi_pb.CommandTypes, msg []string,
 	args Args) (msgProto *mdapi_pb.WrapperCommand, err error) {
 		msgProto = &mdapi_pb.WrapperCommand{
 			Header: &mdapi_pb.Header{
 				Type: commandType,
 				Entity: mdapi_pb.Entities_CLIENT,
-				Origin: mdcli.identity,
-				Address: mdcli.identity, 
+				Origin: client.identity,
+				Address: client.identity, 
 			},
 		}
 
@@ -118,7 +119,7 @@ func (mdcli *Mdcli) PackageProto(
 		return
 }
 
-func (mdcli *Mdcli) SendToBroker(
+func (client *Client) SendToBroker(
 	msgProto *mdapi_pb.WrapperCommand) (err error) {
 		commandType := msgProto.GetHeader().GetType()
 		msgBytes, err := proto.Marshal(msgProto)
@@ -126,12 +127,12 @@ func (mdcli *Mdcli) SendToBroker(
 			panic(err)
 		}
 	
-		if mdcli.verbose {
-			log.Printf("I: send %s to coordinator\n", CommandMap[commandType])
+		if client.verbose {
+			log.Printf("I: send %s to coordinator\n", mdapi.CommandMap[commandType])
 		}
 		// First part is the "forwarded" bit, set to 0 because clients can't forward
 		// messages.
-		_, err = mdcli.client.SendMessage(0, msgBytes)
+		_, err = client.clientSocket.SendMessage(0, msgBytes)
 		return
 }
 
@@ -140,16 +141,16 @@ func (mdcli *Mdcli) SendToBroker(
 // replay message or Nil if there was no reply. Does not attempt to recover from
 // a broker failure, this is not possible without storing all unanswered
 // requests and resending them all.
-func (mdcli *Mdcli) RecvFromBroker() (msgProto *mdapi_pb.WrapperCommand) {
+func (client *Client) RecvFromBroker() (msgProto *mdapi_pb.WrapperCommand) {
 	// Poll socket for a reply with timeout.
-	polled, err := mdcli.poller.Poll(mdcli.timeout)
+	polled, err := client.poller.Poll(client.timeout)
 	if err != nil {
 		return 
 	}
 
 	// If we got a reply, process it.
 	if len(polled) > 0 {
-		recvBytes, err := mdcli.client.RecvMessageBytes(0)
+		recvBytes, err := client.clientSocket.RecvMessageBytes(0)
 		if err != nil {
 			log.Println("E: interrupt received, killing client...")
 			return
@@ -159,7 +160,7 @@ func (mdcli *Mdcli) RecvFromBroker() (msgProto *mdapi_pb.WrapperCommand) {
 			log.Fatalln("E: failed to parse wrapped command", err)
 		}
 
-		if mdcli.verbose {
+		if client.verbose {
 			log.Printf("I: received reply: %q\n", msgProto.GetRequest().GetBody())
 		}
 
@@ -168,7 +169,7 @@ func (mdcli *Mdcli) RecvFromBroker() (msgProto *mdapi_pb.WrapperCommand) {
 	}
 
 	err = errPermanent
-	if mdcli.verbose {
+	if client.verbose {
 		log.Println(err)
 	}
 	return

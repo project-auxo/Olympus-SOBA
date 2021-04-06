@@ -5,7 +5,7 @@ import (
 	"log"
 	"flag"
 
-	"github.com/Project-Auxo/Olympus/pkg/mdapi"
+	agent "github.com/Project-Auxo/Olympus/pkg/agent"
 	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 
 	"github.com/Project-Auxo/Olympus/config"
@@ -37,7 +37,7 @@ func main() {
 
 	brokerEndpoint := fmt.Sprintf(
 		"tcp://%s:%d", brokerHostname, configuration.Broker.Port)
-	client, _ := mdapi.NewMdcli(id, brokerEndpoint, verbose)
+	client, _ := agent.NewClient(id, brokerEndpoint, verbose)
 
 	// TODO: Fix the service, loader issues, so as to use correct dispatch.
 	// service.DispatchRequest(client, serviceName, []string{})
@@ -45,7 +45,7 @@ func main() {
 	numTries := 1
 	for count = 0; count < numTries; count++ {
 		requestProto, _ := client.PackageProto(mdapi_pb.CommandTypes_REQUEST,
-			[]string{"Hello World"}, mdapi.Args{ServiceName: serviceName})
+			[]string{"Hello World"}, agent.Args{ServiceName: serviceName})
 		err := client.SendToBroker(requestProto)
 		if err != nil {
 			log.Println("Send:", err)

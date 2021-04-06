@@ -1,4 +1,4 @@
-package actor
+package agent
 
 import (
 	"log"
@@ -46,10 +46,10 @@ type Coordinator struct {
 	endpoint string // Coordinator binds to this endpoint.
 	poller *zmq.Poller
 
-	runningWorkers map[string]*mdapi.Mdwrk
+	runningWorkers map[string]*Worker
 
 	verbose bool 	// Print activity to stdout
-	// services map[string]*mdapi.Mdwrk		// Hash of current running services.
+	// services map[string]*Worker		// Hash of current running services.
 	loadableServices []string
 
 	// Heartbeat management.
@@ -74,7 +74,7 @@ func NewCoordinator(
 		endpoint: endpoint,
 		poller: zmq.NewPoller(),
 		loadableServices: loadableServices,
-		runningWorkers: make(map[string]*mdapi.Mdwrk),
+		runningWorkers: make(map[string]*Worker),
 		heartbeat: 1000 * time.Millisecond,
 		reconnect: 1000 * time.Millisecond,
 		verbose: verbose,
@@ -128,9 +128,8 @@ func (coordinator *Coordinator) Run() {
 		// Send heartbeat if it's time.
 		if time.Now().After(coordinator.heartbeatAt) {
 			heartbeatProto, _ := coordinator.PackageProto(
-				mdapi_pb.CommandTypes_HEARTBEAT, []string{}, mdapi.Args{})
-			coordinator.SendToEntity(heartbeatProto, mdapi_pb.Entities_BROKER,
-				mdapi.Args{})
+				mdapi_pb.CommandTypes_HEARTBEAT, []string{}, Args{})
+			coordinator.SendToEntity(heartbeatProto, mdapi_pb.Entities_BROKER,Args{})
 			coordinator.heartbeatAt = time.Now().Add(coordinator.heartbeat)
 		}
 	}
@@ -150,7 +149,7 @@ func (coordinator *Coordinator) Close() {
 // package.
 func (coordinator *Coordinator) PackageProto(
 	commandType mdapi_pb.CommandTypes, msg []string,
-	args mdapi.Args) (msgProto *mdapi_pb.WrapperCommand, err error){
+	args Args) (msgProto *mdapi_pb.WrapperCommand, err error){
 		msgProto = &mdapi_pb.WrapperCommand{
 			Header: &mdapi_pb.Header{
 				Type: commandType,
@@ -216,7 +215,7 @@ func (coordinator *Coordinator) ForwardProto(
 
 // SendToEntity sends a message to the specified entity.
 func (coordinator *Coordinator) SendToEntity(msgProto *mdapi_pb.WrapperCommand,
-	entity mdapi_pb.Entities, args mdapi.Args) (err error) {
+	entity mdapi_pb.Entities, args Args) (err error) {
 		commandType := msgProto.GetHeader().GetType()
 		var msgBytes []byte
 		if args.Forward {
@@ -266,8 +265,8 @@ func (coordinator *Coordinator) ConnectToBroker() (err error) {
 
 	// Register coordinator with the broker.
 	readyProto, err := coordinator.PackageProto(
-		mdapi_pb.CommandTypes_READY, []string{}, mdapi.Args{})
-	coordinator.SendToEntity(readyProto, mdapi_pb.Entities_BROKER, mdapi.Args{})
+		mdapi_pb.CommandTypes_READY, []string{}, Args{})
+	coordinator.SendToEntity(readyProto, mdapi_pb.Entities_BROKER, Args{})
 
 	// If liveness hits zero, queue is considered disconnected.
 	coordinator.liveness = heartbeatLiveness
@@ -342,13 +341,13 @@ func (coordinator *Coordinator) DispatchRequests(
 	// Forward the requestProto to the worker that was just spawned.
 
 	// Forward the request to the worker.
-	coordinator.SendToEntity(requestProto, mdapi_pb.Entities_WORKER, mdapi.Args{
+	coordinator.SendToEntity(requestProto, mdapi_pb.Entities_WORKER, Args{
 		ServiceName: serviceName, WorkerIdentity: id, Forward: true,})
 }
 
 func (coordinator *Coordinator) SpawnWorker(id uuid.UUID) {
 		stringId := id.String()
-		worker, _ := mdapi.NewMdwrk(
+		worker, _ := NewWorker(
 			id, workersEndpoint, coordinator.verbose, stringId)
 
 		// Coordinator waits for worker to register itself.
@@ -365,9 +364,9 @@ func (coordinator *Coordinator) KillWorker(id uuid.UUID) {
 		return
 	}
 	disconnectProto, _ := coordinator.PackageProto(
-		mdapi_pb.CommandTypes_DISCONNECT, []string{}, mdapi.Args{})
+		mdapi_pb.CommandTypes_DISCONNECT, []string{}, Args{})
 	coordinator.SendToEntity(
-		disconnectProto, mdapi_pb.Entities_WORKER, mdapi.Args{WorkerIdentity: id})
+		disconnectProto, mdapi_pb.Entities_WORKER, Args{WorkerIdentity: id})
 	delete(coordinator.runningWorkers, stringId)
 }
 
@@ -397,7 +396,7 @@ func (coordinator *Coordinator) RecvFromWorkers() {
 			id, _ := uuid.Parse(msgProto.GetHeader().GetOrigin())
 			coordinator.KillWorker(id)
 			coordinator.SendToEntity(
-			msgProto, mdapi_pb.Entities_BROKER, mdapi.Args{Forward: true})
+			msgProto, mdapi_pb.Entities_BROKER, Args{Forward: true})
 		default:
 			log.Printf("E: invalid input message %q\n", command)
 		}

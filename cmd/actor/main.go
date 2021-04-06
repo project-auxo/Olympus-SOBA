@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/Project-Auxo/Olympus/config"
-	act "github.com/Project-Auxo/Olympus/pkg/actor"
+	agent "github.com/Project-Auxo/Olympus/pkg/agent"
 )
 
 func main() {
@@ -43,7 +43,7 @@ func main() {
 			"tcp://%s:%d", actorHostname, configuration.Actor.Port)
 	}
 
-	actor := act.NewActor(
+	actor := agent.NewActor(
 		actorName, loadableServices, broker, actorEndpoint, verbose)
 	actor.Run()
 }

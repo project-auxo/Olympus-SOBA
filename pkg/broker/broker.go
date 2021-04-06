@@ -1,4 +1,4 @@
-package mdbroker
+package broker
 
 import (
 	"log"
@@ -9,8 +9,8 @@ import (
 	zmq "github.com/pebbe/zmq4"
 	"google.golang.org/protobuf/proto"
 
+	agent "github.com/Project-Auxo/Olympus/pkg/agent"
 	"github.com/Project-Auxo/Olympus/pkg/util"
-	"github.com/Project-Auxo/Olympus/pkg/mdapi"
 	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 )
 
@@ -124,11 +124,11 @@ func (broker *Broker) Close() (err error) {
 func (broker *Broker) Bind(endpoint string) (err error) {
 	err = broker.socket.Bind(endpoint)
 	if err != nil {
-		log.Println("E: MDP broker failed to bind at", endpoint)
+		log.Println("E: broker failed to bind at", endpoint)
 		return
 	}
 	broker.endpoint = endpoint
-	log.Println("I: MDP broker is active at", endpoint)
+	log.Println("I: broker is active at", endpoint)
 	return
 }
 
@@ -136,7 +136,7 @@ func (broker *Broker) Bind(endpoint string) (err error) {
 // package.
 func (broker *Broker) PackageProto(
 	commandType mdapi_pb.CommandTypes, msg []string,
-	args mdapi.Args) (msgProto *mdapi_pb.WrapperCommand, err error){
+	args agent.Args) (msgProto *mdapi_pb.WrapperCommand, err error){
 		msgProto = &mdapi_pb.WrapperCommand{
 			Header: &mdapi_pb.Header{
 				Type: commandType,
@@ -283,7 +283,7 @@ func (broker *Broker) Handle() {
 			 broker.Purge()
 			 for _, actor := range broker.actors {
 					heartbeatProto, _ := broker.PackageProto(
-						mdapi_pb.CommandTypes_HEARTBEAT, []string{}, mdapi.Args{}) 
+						mdapi_pb.CommandTypes_HEARTBEAT, []string{}, agent.Args{}) 
 				 actor.Send(heartbeatProto, false)
 			 }
 			 broker.heartbeatAt = time.Now().Add(HeartbeatInterval)
@@ -420,7 +420,7 @@ func (broker *Broker) ActorRequire(receivedFrom []byte) (actor *Actor) {
 func (broker *Broker) DeleteActor(actor *Actor, disconnect bool) {
 	if disconnect {
 		disconnectProto, _ := broker.PackageProto(
-			mdapi_pb.CommandTypes_DISCONNECT, []string{}, mdapi.Args{})
+			mdapi_pb.CommandTypes_DISCONNECT, []string{}, agent.Args{})
 		actor.Send(disconnectProto, false)
 	}
 	for serviceName, actors := range broker.actorServiceMap {

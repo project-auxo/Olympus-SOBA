@@ -1,4 +1,4 @@
-package mdapi
+package agent
 
 import (
 	"log"
@@ -9,11 +9,12 @@ import (
 	zmq "github.com/pebbe/zmq4"
 	"google.golang.org/protobuf/proto"
 
+	mdapi "github.com/Project-Auxo/Olympus/pkg/mdapi"
 	// "github.com/Project-Auxo/Olympus/pkg/service"
 	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 )
 
-// TODO: Replace all "mdwrk" with "worker" to get consistency across codebase.
+// TODO: Replace all "worker" with "worker" to get consistency across codebase.
 
 
 type Args struct {
@@ -23,8 +24,8 @@ type Args struct {
 	Forward bool // If the message being sent was forwarded.
 }
 
-// Mdwrk is the Majordomo Protocol Worker API.
-type Mdwrk struct {
+// Worker is the Majordomo Protocol Worker API.
+type Worker struct {
 	id uuid.UUID
 	service string
 	coordinator string	// Where to connect to coordinator.
@@ -33,49 +34,49 @@ type Mdwrk struct {
 }
 
 
-// NewMdwrk is a constructor.
-func NewMdwrk(
+// NewWorker is a constructor.
+func NewWorker(
 	id uuid.UUID,
-	coordinator string, verbose bool, identity string) (mdwrk *Mdwrk, err error) {
-		mdwrk = &Mdwrk{
+	coordinator string, verbose bool, identity string) (worker *Worker, err error) {
+		worker = &Worker{
 			id: id,
 			coordinator: coordinator,
 			verbose: verbose,
 		}
-		err = mdwrk.ConnectToCoordinator(identity)
+		err = worker.ConnectToCoordinator(identity)
 
-		readyProto, _ := mdwrk.PackageProto(
+		readyProto, _ := worker.PackageProto(
 			mdapi_pb.CommandTypes_READY, []string{}, Args{})
-		mdwrk.SendToCoordinator(readyProto)
+		worker.SendToCoordinator(readyProto)
 
-		runtime.SetFinalizer(mdwrk, (*Mdwrk).Close)
+		runtime.SetFinalizer(worker, (*Worker).Close)
 		return
 }
 
-func (mdwrk *Mdwrk) GetID() uuid.UUID {
-	return mdwrk.id
+func (worker *Worker) GetID() uuid.UUID {
+	return worker.id
 }
 
-// Close is mdwrk's destructor.
-func (mdwrk *Mdwrk) Close() {
-	if mdwrk.coordinatorSocket != nil {
-		mdwrk.coordinatorSocket.Close()
-		mdwrk.coordinatorSocket = nil
+// Close is worker's destructor.
+func (worker *Worker) Close() {
+	if worker.coordinatorSocket != nil {
+		worker.coordinatorSocket.Close()
+		worker.coordinatorSocket = nil
 	}
 }
 
 
-func (mdwrk *Mdwrk) ConnectToCoordinator(identity string) (err error) {
-	mdwrk.Close()
-	mdwrk.coordinatorSocket, _ = zmq.NewSocket(zmq.DEALER)
+func (worker *Worker) ConnectToCoordinator(identity string) (err error) {
+	worker.Close()
+	worker.coordinatorSocket, _ = zmq.NewSocket(zmq.DEALER)
 	if identity != "" {
-		mdwrk.coordinatorSocket.SetIdentity(identity)
+		worker.coordinatorSocket.SetIdentity(identity)
 	}
-	err = mdwrk.coordinatorSocket.Connect(mdwrk.coordinator)
-	if mdwrk.verbose {
+	err = worker.coordinatorSocket.Connect(worker.coordinator)
+	if worker.verbose {
 		log.Printf(
 			"W-%s: connecting to coordinator at %s\n",
-			mdwrk.id.String(), mdwrk.coordinator)
+			worker.id.String(), worker.coordinator)
 	}
 	return
 }
@@ -83,15 +84,15 @@ func (mdwrk *Mdwrk) ConnectToCoordinator(identity string) (err error) {
 
 // PackageProto will marshal the given information into the correct bytes
 // package.
-func (mdwrk *Mdwrk) PackageProto(
+func (worker *Worker) PackageProto(
 	commandType mdapi_pb.CommandTypes, msg []string,
 	args Args) (msgProto *mdapi_pb.WrapperCommand, err error) {
 		msgProto = &mdapi_pb.WrapperCommand{
 			Header: &mdapi_pb.Header{
 				Type: commandType,
 				Entity: mdapi_pb.Entities_WORKER,
-				Origin: mdwrk.id.String(),
-				Address: mdwrk.id.String(),
+				Origin: worker.id.String(),
+				Address: worker.id.String(),
 			},
 		}
 
@@ -117,7 +118,7 @@ func (mdwrk *Mdwrk) PackageProto(
 }
 
 // SendToCoordinator sends a proto to the coordinator.
-func (mdwrk *Mdwrk) SendToCoordinator(
+func (worker *Worker) SendToCoordinator(
 	msgProto *mdapi_pb.WrapperCommand) (err error) {
 		commandType := msgProto.GetHeader().GetType()
 		msgBytes, err := proto.Marshal(msgProto)
@@ -125,18 +126,18 @@ func (mdwrk *Mdwrk) SendToCoordinator(
 			panic(err)
 		}
 	
-		if mdwrk.verbose {
-		log.Printf("W-%s: send %s to coordinator\n", mdwrk.id.String(),
-			CommandMap[commandType])
+		if worker.verbose {
+		log.Printf("W-%s: send %s to coordinator\n", worker.id.String(),
+			mdapi.CommandMap[commandType])
 		}
-		_, err = mdwrk.coordinatorSocket.SendMessage(msgBytes)
+		_, err = worker.coordinatorSocket.SendMessage(msgBytes)
 		return
 }
 
 
-func (mdwrk *Mdwrk) RecvFromCoordinator() (msgProto *mdapi_pb.WrapperCommand) {
+func (worker *Worker) RecvFromCoordinator() (msgProto *mdapi_pb.WrapperCommand) {
 	// recvBytes of form: [actorIdentity, forwaded bit, msgPayload]
-	recvBytes, _ := mdwrk.coordinatorSocket.RecvMessageBytes(0)
+	recvBytes, _ := worker.coordinatorSocket.RecvMessageBytes(0)
 	forwarded, _ := strconv.Atoi(string(recvBytes[1]))
 	bytesPayload := recvBytes[2]
 
@@ -161,9 +162,9 @@ func (mdwrk *Mdwrk) RecvFromCoordinator() (msgProto *mdapi_pb.WrapperCommand) {
 		log.Panicf("E: received message is not from a coordinator: %q", fromEntity)
 	}
 
-	if mdwrk.verbose {
+	if worker.verbose {
 		log.Printf("W-%s: received message from coordinator: %q\n",
-		mdwrk.id.String(), msgProto)
+		worker.id.String(), msgProto)
 	}
 
 	command := msgProto.GetHeader().GetType()
@@ -172,10 +173,10 @@ func (mdwrk *Mdwrk) RecvFromCoordinator() (msgProto *mdapi_pb.WrapperCommand) {
 		return
 	case mdapi_pb.CommandTypes_DISCONNECT:
 		// Means the worker should shut down.
-		if mdwrk.verbose {
-			log.Printf("W-%s killing self", mdwrk.id.String())
+		if worker.verbose {
+			log.Printf("W-%s killing self", worker.id.String())
 		}
-		mdwrk.Close()
+		worker.Close()
 	default:
 		log.Printf("E: invalid input message %q\n", command)
 	}
@@ -183,24 +184,24 @@ func (mdwrk *Mdwrk) RecvFromCoordinator() (msgProto *mdapi_pb.WrapperCommand) {
 }
 
 
-func (mdwrk *Mdwrk) Work() {
+func (worker *Worker) Work() {
 	for {
-		recvProto := mdwrk.RecvFromCoordinator()
+		recvProto := worker.RecvFromCoordinator()
 		if recvProto.GetHeader().GetType() != mdapi_pb.CommandTypes_REQUEST {
 			return
 			// panic("E: not a request.")
 		}
-		mdwrk.service = recvProto.GetRequest().GetServiceName()
+		worker.service = recvProto.GetRequest().GetServiceName()
 		// replyAddress := recvProto.GetHeader().GetAddress()
 		// FIXME: Should be using service.LoadService, but running into import cycle
 		// issue.
-		// replyProto := service.LoadService(mdwrk, mdwrk.service, recvProto)
+		// replyProto := service.LoadService(worker, worker.service, recvProto)
 
 		// FIXME: Delete me.
 		replyAddress := recvProto.GetHeader().GetAddress()
-		replyProto, _ := mdwrk.PackageProto(mdapi_pb.CommandTypes_REPLY,
+		replyProto, _ := worker.PackageProto(mdapi_pb.CommandTypes_REPLY,
 			[]string{"Hello from worker"},
-			Args{ServiceName: mdwrk.service, ReplyAddress: replyAddress})
-		mdwrk.SendToCoordinator(replyProto)
+			Args{ServiceName: worker.service, ReplyAddress: replyAddress})
+		worker.SendToCoordinator(replyProto)
 	}
 }

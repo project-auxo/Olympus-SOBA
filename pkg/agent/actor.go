@@ -1,4 +1,4 @@
-package actor
+package agent
 
 
 type Actor struct {
