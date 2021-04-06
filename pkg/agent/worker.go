@@ -10,9 +10,14 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	mdapi "github.com/Project-Auxo/Olympus/pkg/mdapi"
-	// "github.com/Project-Auxo/Olympus/pkg/service"
 	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 )
+
+
+// Expose LoadService from service package.
+var LoadService func(
+	*Worker, string, *mdapi_pb.WrapperCommand) *mdapi_pb.WrapperCommand
+
 
 // TODO: Replace all "worker" with "worker" to get consistency across codebase.
 
@@ -170,6 +175,7 @@ func (worker *Worker) RecvFromCoordinator() (msgProto *mdapi_pb.WrapperCommand) 
 	command := msgProto.GetHeader().GetType()
 	switch command {
 	case mdapi_pb.CommandTypes_REQUEST:
+		worker.service = msgProto.GetRequest().GetServiceName()
 		return
 	case mdapi_pb.CommandTypes_DISCONNECT:
 		// Means the worker should shut down.
@@ -191,17 +197,8 @@ func (worker *Worker) Work() {
 			return
 			// panic("E: not a request.")
 		}
-		worker.service = recvProto.GetRequest().GetServiceName()
-		// replyAddress := recvProto.GetHeader().GetAddress()
-		// FIXME: Should be using service.LoadService, but running into import cycle
-		// issue.
-		// replyProto := service.LoadService(worker, worker.service, recvProto)
-
-		// FIXME: Delete me.
-		replyAddress := recvProto.GetHeader().GetAddress()
-		replyProto, _ := worker.PackageProto(mdapi_pb.CommandTypes_REPLY,
-			[]string{"Hello from worker"},
-			Args{ServiceName: worker.service, ReplyAddress: replyAddress})
+		serviceName := recvProto.GetRequest().GetServiceName()
+		replyProto := LoadService(worker, serviceName, recvProto)
 		worker.SendToCoordinator(replyProto)
 	}
 }

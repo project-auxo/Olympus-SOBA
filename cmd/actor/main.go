@@ -8,7 +8,13 @@ import (
 
 	"github.com/Project-Auxo/Olympus/config"
 	agent "github.com/Project-Auxo/Olympus/pkg/agent"
+	service "github.com/Project-Auxo/Olympus/pkg/service"
 )
+
+func init() {
+	// Workers use this service loader.
+	agent.LoadService = service.LoadService
+}
 
 func main() {
 	actorNamePtr := flag.String("name", "A01", "Actor's name.")
