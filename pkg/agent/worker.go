@@ -2,17 +2,18 @@ package agent
 
 import (
 	"log"
+	"reflect"
 	"runtime"
 	"strconv"
 
 	"github.com/google/uuid"
 	zmq "github.com/pebbe/zmq4"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	mdapi "github.com/Project-Auxo/Olympus/pkg/mdapi"
 	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 )
-
 
 // Expose LoadService from service package.
 var LoadService func(
@@ -90,7 +91,7 @@ func (worker *Worker) ConnectToCoordinator(identity string) (err error) {
 // PackageProto will marshal the given information into the correct bytes
 // package.
 func (worker *Worker) PackageProto(
-	commandType mdapi_pb.CommandTypes, msg []string,
+	commandType mdapi_pb.CommandTypes, payload interface{},
 	args Args) (msgProto *mdapi_pb.WrapperCommand, err error) {
 		msgProto = &mdapi_pb.WrapperCommand{
 			Header: &mdapi_pb.Header{
@@ -101,6 +102,23 @@ func (worker *Worker) PackageProto(
 			},
 		}
 
+		// Payload types.
+		const (
+			Unknown = iota
+			AnyProto
+			StringSlice
+		)
+
+		payloadTypeFlag := Unknown
+		if payloadType := reflect.TypeOf(payload); payloadType.String() ==
+			"*anypb.Any" {
+				payloadTypeFlag = AnyProto
+		} else if payloadType.Kind() == reflect.Slice && 
+			payloadType.Elem().String() == "string" {
+				// The payload is of type []string.
+				payloadTypeFlag = StringSlice
+		}
+
 		switch commandType {
 		case mdapi_pb.CommandTypes_READY:
 			msgProto.Command = &mdapi_pb.WrapperCommand_Ready{
@@ -109,13 +127,19 @@ func (worker *Worker) PackageProto(
 		case mdapi_pb.CommandTypes_REPLY:
 			serviceName := args.ServiceName
 			replyAddress := args.ReplyAddress
-			msgProto.Command = &mdapi_pb.WrapperCommand_Reply{
-				Reply: &mdapi_pb.Reply{
-					ServiceName: serviceName,
-					ReplyAddress: replyAddress,
-					ReplyBody: &mdapi_pb.Reply_Body{Body: &mdapi_pb.Body{Body: msg},},
-				},
+			reply := mdapi_pb.WrapperCommand_Reply{Reply: &mdapi_pb.Reply{
+				ServiceName: serviceName, ReplyAddress: replyAddress}}
+			switch payloadTypeFlag {
+			case AnyProto: 	// payload is a CustomBody Any proto.
+				reply.Reply.ReplyBody = &mdapi_pb.Reply_CustomBody{
+					CustomBody: payload.(*anypb.Any)}
+			case StringSlice:		// payload is a string slice []string.
+				reply.Reply.ReplyBody = &mdapi_pb.Reply_Body{
+					Body: &mdapi_pb.Body{Body: payload.([]string)}}
+			default:
+				log.Fatalln("E-W: the payload is neither []string nor 'Any' proto")
 			}
+			msgProto.Command = &reply
 		default:
 			log.Fatalf("E-W: uknown commandType %q", commandType)
 		}

@@ -10,7 +10,7 @@ import (
 	service "github.com/Project-Auxo/Olympus/pkg/service"
 
 	"github.com/Project-Auxo/Olympus/config"
-	// "github.com/Project-Auxo/Olympus/pkg/service"
+	"github.com/Project-Auxo/Olympus/pkg/service/echo"
 )
 
 
@@ -40,7 +40,9 @@ func main() {
 		"tcp://%s:%d", brokerHostname, configuration.Broker.Port)
 	client, _ := agent.NewClient(id, brokerEndpoint, verbose)
 
+	// Play around by generating and submitting the echo request.
+	echoRequest := echo.GenerateEchoRequest([]string{"Hello Freetown!"})
 	requestProto, _ := client.PackageProto(mdapi_pb.CommandTypes_REQUEST,
-		[]string{"Hello World!"}, agent.Args{ServiceName: serviceName})
+		echoRequest, agent.Args{ServiceName: serviceName})
 	service.DispatchRequest(client, requestProto)
 }

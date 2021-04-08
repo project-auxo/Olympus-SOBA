@@ -3,18 +3,19 @@ package agent
 import (
 	"errors"
 	"log"
+	"reflect"
 	"runtime"
 	"time"
 
 	zmq "github.com/pebbe/zmq4"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/anypb"
 
 	mdapi "github.com/Project-Auxo/Olympus/pkg/mdapi"
 	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
 )
 
 var	errPermanent = errors.New("permanent error, abandoning request")
-// TODO: Change clientSocket to clientSocket
 
 // Client is the Majordomo Protocol Client API.
 type Client struct {
@@ -93,7 +94,7 @@ func (client *Client) SetTimeout(timeout time.Duration) {
 // PackageProto will marshal the given information into the correct bytes
 // package.
 func (client *Client) PackageProto(
-	commandType mdapi_pb.CommandTypes, msg []string,
+	commandType mdapi_pb.CommandTypes, payload interface{},
 	args Args) (msgProto *mdapi_pb.WrapperCommand, err error) {
 		msgProto = &mdapi_pb.WrapperCommand{
 			Header: &mdapi_pb.Header{
@@ -104,18 +105,43 @@ func (client *Client) PackageProto(
 			},
 		}
 
+		// Payload types.
+		const (
+			Unknown = iota
+			AnyProto
+			StringSlice
+		)
+		payloadTypeFlag := Unknown
+		if payloadType := reflect.TypeOf(payload); payloadType.String() ==
+			"*anypb.Any" {
+				payloadTypeFlag = AnyProto
+		} else if payloadType.Kind() == reflect.Slice && 
+			payloadType.Elem().String() == "string" {
+				// The payload is of type []string.
+				payloadTypeFlag = StringSlice
+		}
+
+		var request mdapi_pb.WrapperCommand_Request
 		switch commandType {
 		case mdapi_pb.CommandTypes_REQUEST:
 			serviceName := args.ServiceName
-			msgProto.Command = &mdapi_pb.WrapperCommand_Request{
-				Request: &mdapi_pb.Request{
-					ServiceName: serviceName,
-					RequestBody: &mdapi_pb.Request_Body{Body: &mdapi_pb.Body{Body: msg},},
-				},
+			request = mdapi_pb.WrapperCommand_Request{
+				Request: &mdapi_pb.Request{ServiceName: serviceName}}
+			switch payloadTypeFlag {
+			case AnyProto:  	// payload is a CustomBody Any proto.
+				request.Request.RequestBody = &mdapi_pb.Request_CustomBody{
+					CustomBody: payload.(*anypb.Any)}
+			case StringSlice:		// payload is a string slice []string.
+				request.Request.RequestBody = &mdapi_pb.Request_Body{
+					Body: &mdapi_pb.Body{Body: payload.([]string)}}
+			default:
+				log.Fatalln("E-C: the payload is neither []string nor 'Any' proto")
 			}
 		default:
-			log.Fatalf("E-C: uknown commandType %q", commandType)
+			log.Fatalf("E-C: unknown commandType %q", commandType)
 		}
+		log.Println(request)
+		msgProto.Command = &request
 		return
 }
 

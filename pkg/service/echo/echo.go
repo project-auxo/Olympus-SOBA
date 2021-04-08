@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"log"
 
+	"google.golang.org/protobuf/types/known/anypb"
+
 	agent "github.com/Project-Auxo/Olympus/pkg/agent"
 	mdapi_pb "github.com/Project-Auxo/Olympus/proto/mdapi"
+	echo_pb "github.com/Project-Auxo/Olympus/proto/service/echo"
 )
 
 // TODO: This should take an echo proto.
@@ -17,8 +20,17 @@ Response:
 	-
 */
 
-
 // ------------ Client --------------------
+
+func GenerateEchoRequest(msg []string) *anypb.Any {
+	echoProto := &echo_pb.EchoRequest{Request: msg}
+	echoAny, err := anypb.New(echoProto)
+	if err != nil {
+		panic("failed to generate an example proto")
+	}
+	return echoAny
+}
+
 func ClientRequest(
 	client *agent.Client, requestProto *mdapi_pb.WrapperCommand) { 
 		var count int
@@ -46,10 +58,22 @@ func ActorResponse(worker *agent.Worker, requestProto *mdapi_pb.WrapperCommand) 
 
 		replyAddress := requestProto.GetHeader().GetAddress()
 		service := requestProto.GetRequest().GetServiceName()
-		msg := requestProto.GetRequest().GetBody().GetBody()
+
+		var msg []string
+		switch requestProto.GetRequest().GetRequestBody().(type) {
+		case *mdapi_pb.Request_Body:
+			msg = requestProto.GetRequest().GetBody().GetBody()
+		case *mdapi_pb.Request_CustomBody:
+			echo := &echo_pb.EchoRequest{}
+			echoAny := requestProto.GetRequest().GetCustomBody()
+			if err := echoAny.UnmarshalTo(echo); err != nil {
+				log.Println("echo: failed to unmarshal request")
+			}
+			msg = echo.GetRequest()
+		}
+		
 		msg = append(msg, fmt.Sprintf("from %s", worker.GetID().String()))
 		replyProto, _ = worker.PackageProto(mdapi_pb.CommandTypes_REPLY, msg,
 			agent.Args{ServiceName: service, ReplyAddress: replyAddress})
-
 		return
 }
